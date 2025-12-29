@@ -1,0 +1,167 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: load-crypto-bronze
+  namespace: default
+  labels:
+    app: load-crypto-bronze
+    component: etl
+    layer: bronze
+spec:
+  type: Python
+  mode: cluster
+  pythonVersion: "3"
+  sparkVersion: "3.5.0"
+
+  # Spark image with Python support and application code
+  # Build and push using: cd spark-jobs/load-crypto-bronze && ./build-image.sh
+  # Image is available at: https://hub.docker.com/r/hungvt0110/load-crypto-bronze
+  image: hungvt0110/load-crypto-bronze:latest
+
+  imagePullPolicy: Always
+
+  # Main Python application file (inside the image)
+  mainApplicationFile: local:///app/src/main.py
+
+  # Arguments to pass to the Python script
+  # Format: <kafka_topic> <database> <table_name>
+  arguments:
+    - "market-data.finnhub.crypto-trades.bronze" # Kafka topic
+    - "bronze" # Database/warehouse name
+    - "crypto_trades_raw" # Target table name
+
+  # Spark configuration
+  # Note: Most Iceberg/lakekeeper configs are set in Python code (load_crypto_bronze.py)
+  # Only set configs here that must be set before SparkSession creation
+  sparkConf:
+    # JARs packages - must be set before SparkSession creation
+    # Includes: Iceberg, Kafka connector, Hadoop AWS
+    # Note: Using spark-sql-kafka-0-10_2.12 (Scala 2.12) with Spark 3.5.0
+    "spark.jars.packages": "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-aws:3.3.4"
+    # Ivy cache to /tmp (always writable in pods)
+    "spark.jars.ivy": "/tmp/.ivy2"
+    # Kafka consumer config
+    "spark.sql.streaming.kafka.useDeprecatedOffsetFetching": "false"
+
+  # Hadoop configuration for MinIO (S3-compatible)
+  hadoopConf:
+    "fs.s3a.endpoint": "http://openhouse-minio:9000"
+    "fs.s3a.path.style.access": "true"
+    "fs.s3a.connection.ssl.enabled": "false"
+    "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+
+  # Driver configuration
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "2g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    serviceAccount: openhouse-spark-operator-spark
+    env:
+      # Set HOME to /tmp for writable ivy cache
+      - name: HOME
+        value: "/tmp"
+      # Spark and Iceberg versions (used by Python code to build packages string)
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      # Lakekeeper catalog configuration (matches defaults in load_crypto_bronze.py)
+      - name: CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: WAREHOUSE
+        value: "bronze"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      # Kafka configuration
+      - name: KAFKA_BOOTSTRAP_SERVERS
+        value: "openhouse-kafka:9092"
+      - name: KAFKA_TOPIC
+        value: "market-data.finnhub.crypto-trades.bronze"
+      - name: KAFKA_SASL_USERNAME
+        value: "admin"
+      - name: KAFKA_SASL_PASSWORD
+        value: "admin"
+      # MinIO credentials (for Iceberg warehouse)
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+      - name: TRIGGER_INTERVAL
+        value: "10 seconds"
+
+  # Executor configuration
+  # Reduced to allow Silver job to run alongside
+  executor:
+    cores: 2
+    instances: 1 # Reduced from 2 to save memory for Silver job
+    memory: "2g" # Reduced from 4g to save memory
+    memoryOverhead: "512m" # Reduced from 1g
+    labels:
+      version: 3.5.0
+    env:
+      # Set HOME to /tmp for writable ivy cache
+      - name: HOME
+        value: "/tmp"
+      # Spark and Iceberg versions (used by Python code to build packages string)
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      # Lakekeeper catalog configuration (matches defaults in load_crypto_bronze.py)
+      - name: CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: WAREHOUSE
+        value: "bronze"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      # Kafka configuration
+      - name: KAFKA_BOOTSTRAP_SERVERS
+        value: "openhouse-kafka:9092"
+      - name: KAFKA_TOPIC
+        value: "market-data.finnhub.crypto-trades.bronze"
+      - name: KAFKA_SASL_USERNAME
+        value: "admin"
+      - name: KAFKA_SASL_PASSWORD
+        value: "admin"
+      # MinIO credentials (for Iceberg warehouse)
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+      - name: TRIGGER_INTERVAL
+        value: "10 seconds"
+
+  # Dependencies
+  # Data files are included in the Docker image, no need to specify here
+  deps: {}
+
+  # Restart policy
+  restartPolicy:
+    type: Never
+    onFailureRetries: 2
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 3
+    onSubmissionFailureRetryInterval: 20
+
+  # Time to live after completion
+  timeToLiveSeconds: 3600
+
+  # Monitoring - disabled for now (JMX exporter not in image)
+  # monitoring:
+  #   exposeDriverMetrics: true
+  #   exposeExecutorMetrics: true
+  #   prometheus:
+  #     jmxExporterJar: "/prometheus/jmx_prometheus_javaagent-0.16.1.jar"
+  #     port: 8090

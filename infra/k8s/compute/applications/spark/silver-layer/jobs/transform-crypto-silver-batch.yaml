@@ -1,0 +1,147 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: transform-crypto-silver-batch
+  namespace: default
+  labels:
+    app: transform-crypto-silver-batch
+    component: etl
+    layer: silver
+spec:
+  type: Python
+  mode: cluster
+  pythonVersion: "3"
+  sparkVersion: "3.5.0"
+
+  # Spark image with Python support and application code
+  # Build and push using: cd spark-jobs/transform-crypto-silver-batch && ./build-image.sh
+  image: hungvt0110/transform-crypto-silver-batch:latest
+
+  imagePullPolicy: Always
+
+  # Main Python application file (inside the image)
+  mainApplicationFile: local:///app/src/main.py
+
+  # Arguments to pass to the Python script
+  # Format: <start_date> <end_date>
+  arguments:
+    - "2025-12-28" # Start date (YYYY-MM-DD)
+    - "2025-12-29" # End date (YYYY-MM-DD)
+
+  # Spark configuration
+  sparkConf:
+    # JARs packages - must be set before SparkSession creation
+    "spark.jars.packages": "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4"
+    # Ivy cache to /tmp (always writable in pods)
+    "spark.jars.ivy": "/tmp/.ivy2"
+
+  # Hadoop configuration for MinIO (S3-compatible)
+  hadoopConf:
+    "fs.s3a.endpoint": "http://openhouse-minio:9000"
+    "fs.s3a.path.style.access": "true"
+    "fs.s3a.connection.ssl.enabled": "false"
+    "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+
+  # Driver configuration
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "2g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    serviceAccount: openhouse-spark-operator-spark
+    env:
+      # Set HOME to /tmp for writable ivy cache
+      - name: HOME
+        value: "/tmp"
+      # Spark and Iceberg versions
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      # Bronze catalog configuration
+      - name: BRONZE_CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: BRONZE_CLIENT_ID
+        value: "spark"
+      - name: BRONZE_CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: BRONZE_WAREHOUSE
+        value: "bronze"
+      # Silver catalog configuration
+      - name: SILVER_CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: SILVER_CLIENT_ID
+        value: "spark"
+      - name: SILVER_CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: SILVER_WAREHOUSE
+        value: "silver"
+      # Keycloak OAuth
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      # MinIO credentials
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+
+  # Executor configuration
+  executor:
+    cores: 2
+    instances: 2
+    memory: "2g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    env:
+      # Set HOME to /tmp for writable ivy cache
+      - name: HOME
+        value: "/tmp"
+      # Spark and Iceberg versions
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      # Bronze catalog configuration
+      - name: BRONZE_CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: BRONZE_CLIENT_ID
+        value: "spark"
+      - name: BRONZE_CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: BRONZE_WAREHOUSE
+        value: "bronze"
+      # Silver catalog configuration
+      - name: SILVER_CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: SILVER_CLIENT_ID
+        value: "spark"
+      - name: SILVER_CLIENT_SECRET
+        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+      - name: SILVER_WAREHOUSE
+        value: "silver"
+      # Keycloak OAuth
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      # MinIO credentials
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+
+  # Dependencies (empty - code is in Docker image)
+  deps: {}
+
+  # Restart policy
+  restartPolicy:
+    type: Never
+    onFailureRetries: 2
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 3
+    onSubmissionFailureRetryInterval: 20
+
+  # Time to live after completion
+  timeToLiveSeconds: 3600

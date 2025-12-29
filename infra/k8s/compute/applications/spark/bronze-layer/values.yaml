@@ -1,0 +1,60 @@
+# Default values for Bronze Layer SparkApplication template
+# These values can be overridden by Airflow when generating manifests
+
+# Job identification
+job_id: "dag-run-{{ dag_run_id }}" # Will be replaced by Airflow with actual DAG run ID
+
+# Data paths
+input_path: "s3a://raw/nyc_taxi_data/yellow_tripdata.csv" # Input data path in MinIO
+table_name: "taxi_trips" # Target table name in bronze warehouse
+
+# Spark configuration
+sparkVersion: "3.5.0"
+pythonVersion: "3"
+
+# Image configuration
+image: "hungvt0110/ingestion-job:latest"
+imagePullPolicy: "Always"
+
+# Driver resources
+driver:
+  cores: 1
+  coreLimit: "1200m"
+  memory: "2g"
+  memoryOverhead: "512m"
+
+# Executor resources
+executor:
+  cores: 2
+  instances: 3
+  memory: "4g"
+  memoryOverhead: "1g"
+
+# Environment variables (common for driver and executor)
+env:
+  SPARK_MINOR_VERSION: "3.5"
+  ICEBERG_VERSION: "1.5.2"
+  CATALOG_URL: "http://openhouse-lakekeeper:8181/catalog"
+  CLIENT_ID: "spark"
+  CLIENT_SECRET: "UoLrOodDp6idyOh1wryGPpzJWlPMX0Td"
+  WAREHOUSE: "bronze"
+  KEYCLOAK_TOKEN_ENDPOINT: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+  AWS_ACCESS_KEY_ID: "admin"
+  AWS_SECRET_ACCESS_KEY: "admin123"
+
+# Service account
+serviceAccount: "openhouse-spark-operator-spark"
+
+# Namespace
+namespace: "data-platform"
+
+# Restart policy
+restartPolicy:
+  type: "Never"
+  onFailureRetries: 2
+  onFailureRetryInterval: 10
+  onSubmissionFailureRetries: 3
+  onSubmissionFailureRetryInterval: 20
+
+# Time to live after completion (seconds)
+timeToLiveSeconds: 3600

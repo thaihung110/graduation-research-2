@@ -1,0 +1,120 @@
+# Template for Gold Layer SparkApplication
+# This template will be used by Airflow to generate dynamic SparkApplication manifests
+# Variables: {{ job_id }}, {{ input_tables }}, {{ output_table }}
+
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: gold-layer-{{ job_id }}
+  namespace: data-platform
+  labels:
+    app: data-lakehouse
+    layer: gold
+    job-id: "{{ job_id }}"
+  annotations:
+    argocd.argoproj.io/compare-result: "true"
+spec:
+  type: Python
+  mode: cluster
+  pythonVersion: "3"
+  sparkVersion: "3.5.0"
+
+  # Spark image with Python support and application code
+  image: hungvt0110/ingestion-job:latest
+  imagePullPolicy: Always
+
+  # Main Python application file (inside the image)
+  # TODO: Update to gold transformation script when available
+  mainApplicationFile: local:///app/ingest_taxi_data.py
+
+  # Arguments to pass to the Python script
+  # Format: <input_tables> <warehouse> <output_table>
+  arguments:
+    - "{{ input_tables }}" # e.g., silver.taxi_trips_clean,silver.customers_clean
+    - "gold" # Warehouse name (always gold for gold layer)
+    - "{{ output_table }}" # e.g., customer_metrics
+
+  # Spark configuration
+  sparkConf:
+    "spark.jars.packages": "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4"
+    "spark.jars.ivy": "/tmp/.ivy2"
+
+  # Hadoop configuration for MinIO (S3-compatible)
+  hadoopConf:
+    "fs.s3a.endpoint": "http://openhouse-minio:9000"
+    "fs.s3a.path.style.access": "true"
+    "fs.s3a.connection.ssl.enabled": "false"
+    "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+
+  # Driver configuration
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "2g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    serviceAccount: openhouse-spark-operator-spark
+    env:
+      - name: HOME
+        value: "/tmp"
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      - name: CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "UoLrOodDp6idyOh1wryGPpzJWlPMX0Td"
+      - name: WAREHOUSE
+        value: "gold"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+
+  # Executor configuration
+  executor:
+    cores: 2
+    instances: 3
+    memory: "4g"
+    memoryOverhead: "1g"
+    labels:
+      version: 3.5.0
+    env:
+      - name: HOME
+        value: "/tmp"
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.5.2"
+      - name: CATALOG_URL
+        value: "http://openhouse-lakekeeper:8181/catalog"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "UoLrOodDp6idyOh1wryGPpzJWlPMX0Td"
+      - name: WAREHOUSE
+        value: "gold"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+
+  deps: {}
+
+  restartPolicy:
+    type: Never
+    onFailureRetries: 2
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 3
+    onSubmissionFailureRetryInterval: 20
+
+  timeToLiveSeconds: 3600

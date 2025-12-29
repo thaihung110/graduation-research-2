@@ -1,0 +1,7 @@
+kafka-python-ng
+websocket-client
+finnhub-python
+avro-python3
+python-snappy
+pyyaml
+requests

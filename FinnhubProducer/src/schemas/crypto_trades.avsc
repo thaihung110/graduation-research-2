@@ -1,0 +1,103 @@
+{
+  "type": "record",
+  "name": "CryptoTradeMessage",
+  "namespace": "com.finnhub.crypto",
+  "doc": "Schema for real-time crypto trade messages from Finnhub WebSocket",
+  "fields": [
+    {
+      "name": "message_type",
+      "type": "string",
+      "doc": "Type of message: 'trade'"
+    },
+    {
+      "name": "trades",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "Trade",
+          "fields": [
+            {
+              "name": "symbol",
+              "type": "string",
+              "doc": "Trading pair symbol (e.g., BINANCE:BTCUSDT)"
+            },
+            {
+              "name": "exchange",
+              "type": "string",
+              "doc": "Exchange name extracted from symbol"
+            },
+            {
+              "name": "base_currency",
+              "type": "string",
+              "doc": "Base currency (e.g., BTC)"
+            },
+            {
+              "name": "quote_currency",
+              "type": "string",
+              "doc": "Quote currency (e.g., USDT)"
+            },
+            {
+              "name": "price",
+              "type": "double",
+              "doc": "Trade price"
+            },
+            {
+              "name": "volume",
+              "type": "double",
+              "doc": "Trade volume"
+            },
+            {
+              "name": "timestamp_ms",
+              "type": "long",
+              "doc": "Trade timestamp in milliseconds (Unix epoch)"
+            },
+            {
+              "name": "conditions",
+              "type": [
+                "null",
+                {
+                  "type": "array",
+                  "items": "string"
+                }
+              ],
+              "default": null,
+              "doc": "Trade conditions/flags"
+            },
+            {
+              "name": "ingestion_timestamp_ms",
+              "type": "long",
+              "doc": "Timestamp when message was received by producer"
+            }
+          ]
+        }
+      },
+      "doc": "Array of trade records"
+    },
+    {
+      "name": "producer_metadata",
+      "type": {
+        "type": "record",
+        "name": "ProducerMetadata",
+        "fields": [
+          {
+            "name": "producer_id",
+            "type": "string",
+            "doc": "Producer instance identifier"
+          },
+          {
+            "name": "kafka_topic",
+            "type": "string",
+            "doc": "Kafka topic name"
+          },
+          {
+            "name": "schema_version",
+            "type": "string",
+            "doc": "Schema version"
+          }
+        ]
+      },
+      "doc": "Producer metadata for tracking"
+    }
+  ]
+}
