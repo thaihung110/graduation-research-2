@@ -1,209 +1,288 @@
-# Data Platform
+# Crypto Data Lakehouse Platform
 
-A comprehensive data platform built on Kubernetes for ingesting, processing, and managing data using modern data engineering tools.
+Real-time crypto trading data platform built on Kubernetes with Apache Iceberg, Spark, and Kafka.
+
+## Overview
+
+End-to-end data platform for ingesting, processing, and analyzing crypto trading data using modern data lakehouse architecture.
+
+**Data Flow**:
+
+```
+Finnhub API → FinnhubProducer → Kafka → Spark Streaming → Bronze (Iceberg)
+                                                              ↓
+                                                       Spark Batch → Silver (Iceberg)
+```
+
+## Architecture
+
+### Components
+
+| Component         | Purpose                          | Technology                           |
+| ----------------- | -------------------------------- | ------------------------------------ |
+| **Ingestion**     | Real-time crypto data collection | FinnhubProducer (Python + WebSocket) |
+| **Messaging**     | Event streaming                  | Apache Kafka                         |
+| **Processing**    | Stream & batch processing        | Apache Spark on Kubernetes           |
+| **Storage**       | Data lakehouse                   | Apache Iceberg + MinIO (S3)          |
+| **Catalog**       | Metadata management              | Lakekeeper (Iceberg REST Catalog)    |
+| **Orchestration** | Workflow scheduling              | Apache Airflow                       |
+| **Auth**          | Identity & access                | Keycloak (OAuth2)                    |
+
+### Data Layers
+
+1. **Bronze Layer**: Raw crypto trades from Kafka (streaming ingestion)
+2. **Silver Layer**: Cleaned and aggregated OHLCV data (batch processing)
 
 ## Project Structure
 
 ```
-data-platform/
-├── airflow/                    # Airflow DAGs and custom operators
-│   ├── dags/                  # DAG definitions
-│   │   ├── csv_ingestion_listener_dag.py
-│   │   └── taxi_data_ingestion_dag.py
-│   └── src/ingestion/         # Custom modules
-│       ├── kafka_sensor.py
-│       ├── nifi_client.py
-│       └── message_models.py
+.
+├── FinnhubProducer/                    # Real-time crypto data producer
+│   ├── src/
+│   │   ├── FinnhubProducer.py         # Main WebSocket producer
+│   │   ├── schemas/                    # Avro schemas
+│   │   └── utils/                      # Helper functions
+│   ├── Dockerfile
+│   └── README.md
 │
-├── source-api/                # FastAPI CSV upload service
-│   ├── app/                   # Application code
-│   ├── kubernetes/            # K8s deployment manifests
-│   └── Dockerfile
+├── spark-jobs/                         # Spark applications
+│   ├── load-crypto-bronze/            # Streaming: Kafka → Bronze Iceberg
+│   │   ├── src/
+│   │   │   ├── main.py
+│   │   │   ├── config.py
+│   │   │   ├── etl/                   # Extract, Transform, Load
+│   │   │   └── utils/                 # Avro decoder, schemas
+│   │   ├── Dockerfile
+│   │   └── README.md
+│   │
+│   └── transform-crypto-silver-batch/ # Batch: Bronze → Silver OHLCV
+│       ├── src/
+│       │   ├── main.py
+│       │   ├── config.py              # Dual catalog config
+│       │   ├── etl/                   # OHLCV aggregation logic
+│       │   └── utils/                 # Silver table schemas
+│       ├── Dockerfile
+│       └── README.md
 │
-├── spark-jobs/                # Spark job implementations
-│   ├── taxi_data_ingestion/  # Taxi data processing job
-│   └── build-image.sh         # Docker image build script
+├── airflow-dags-deployment/           # Airflow DAGs
+│   ├── dags/
+│   │   └── crypto_ohlcv_silver_batch_dag.py  # Daily OHLCV aggregation
+│   └── README.md
 │
-├── infra/k8s/                 # Kubernetes infrastructure
-│   ├── storage/               # MinIO, PostgreSQL, Keycloak, Lakekeeper
-│   ├── orchestration/         # Kafka, NiFi, Airflow
-│   ├── ingestion/             # Source API deployment
-│   └── compute/               # Spark Operator, Argo CD
-│
-├── docs/                      # Documentation
-│   ├── airflow-git-sync-ssh-setup.md
-│   ├── NIFI-CSV-TO-PARQUET.md
-│   └── AIRFLOW-TAXI-INGESTION-DAG.md
-│
-└── assets/                    # Screenshots and images
+└── infra/k8s/                         # Kubernetes infrastructure
+    ├── storage/                        # Storage layer (MinIO, Lakekeeper, Keycloak)
+    │   ├── config/
+    │   ├── scripts/
+    │   └── README.md
+    │
+    ├── orchestration/                  # Kafka, NiFi, Airflow
+    │   ├── config/
+    │   ├── scripts/
+    │   └── README.md
+    │
+    ├── compute/                        # Spark Operator
+    │   ├── applications/spark/
+    │   │   ├── bronze-layer/jobs/
+    │   │   └── silver-layer/jobs/
+    │   ├── scripts/
+    │   └── README.md
+    │
+    └── ingestion/                      # FinnhubProducer deployment
+        ├── application/
+        ├── scripts/
+        └── README.md
 ```
-
-## Components
-
-### Data Ingestion Layer
-
-**Source API** (FastAPI)
-
-- REST API for CSV file uploads
-- Chunks large files for processing
-- Publishes metadata to Kafka topic `csv-ingestion`
-- Stores chunks in persistent storage
-
-**Kafka** (Bitnami)
-
-- Message broker for event streaming
-- SASL authentication enabled
-- Topics: `csv-ingestion`
-- KRaft mode (no Zookeeper)
-
-**NiFi** (Apache NiFi)
-
-- Data flow automation
-- Consumes Kafka messages
-- Downloads CSV chunks from Source API
-- Converts CSV to Parquet format
-- Uploads to MinIO raw bucket
-
-### Storage Layer
-
-**MinIO** (Object Storage)
-
-- S3-compatible object storage
-- Buckets: `raw`, `bronze`, `silver`, `gold`
-- Stores Parquet files and Iceberg tables
-
-**PostgreSQL** (Bitnami)
-
-- Relational database for metadata
-- Databases: `keycloak`, `catalog`, `openfga`, `source_api`
-- Primary and read replicas
-
-**Lakekeeper** (Iceberg Catalog)
-
-- Apache Iceberg REST catalog
-- Manages table metadata and schemas
-- Integrates with Keycloak for authentication
-- Warehouses: `bronze`, `silver`, `gold`
-
-**Keycloak** (Identity & Access Management)
-
-- OAuth2/OIDC authentication
-- Realm: `iceberg`
-- Clients: `lakekeeper`, `spark`
-- User management and RBAC
-
-**OpenFGA** (Authorization)
-
-- Fine-grained access control
-- Integrates with Lakekeeper
-
-### Orchestration Layer
-
-**Airflow** (Apache Airflow)
-
-- Workflow orchestration
-- DAGs for data pipelines
-- Git-Sync for DAG deployment from private GitHub repo
-- KubernetesPodOperator for Spark job submission
-
-**Kafka UI** (Provectus)
-
-- Web UI for Kafka cluster management
-- Topic monitoring and message inspection
-
-### Compute Layer
-
-**Spark Operator** (Kubeflow)
-
-- Manages Spark applications on Kubernetes
-- Custom Resource Definitions (CRDs)
-- Automatic driver/executor pod management
-
-**Argo CD** (GitOps)
-
-- Continuous deployment
-- Manages Kubernetes resources
-- Git-based configuration
-
-## Data Flow
-
-### CSV Ingestion Pipeline
-
-1. **Upload**: User uploads CSV file to Source API
-2. **Chunk**: Source API splits CSV into chunks
-3. **Publish**: Metadata published to Kafka `csv-ingestion` topic
-4. **Trigger**: Airflow DAG detects Kafka message and triggers NiFi
-5. **Process**: NiFi downloads chunks, converts to Parquet
-6. **Store**: Parquet files uploaded to MinIO `raw` bucket
-
-### Taxi Data Ingestion Pipeline
-
-1. **Schedule**: Airflow DAG runs hourly
-2. **Submit**: DAG submits Spark job to Kubernetes
-3. **Read**: Spark reads Parquet files from MinIO `raw` bucket
-4. **Transform**: Data cleaning and deduplication
-5. **Write**: Writes to Iceberg table in Lakekeeper `bronze` warehouse
-6. **Catalog**: Lakekeeper manages table metadata
 
 ## Quick Start
 
 ### Prerequisites
 
-- Kubernetes cluster (Minikube, Kind, or cloud provider)
+- Kubernetes cluster (local or cloud)
 - kubectl configured
-- Helm 3.x installed
-- Docker for building images
+- Helm 3+
+- Docker
 
-### Deployment Order
+### 1. Deploy Storage Layer
 
-1. **Storage Layer**
+```bash
+cd infra/k8s/storage/scripts
 
-   ```bash
-   cd infra/k8s/storage
-   ./scripts/install_postgresql.sh
-   ./scripts/install_minio.sh
-   ./scripts/install_keycloak.sh
-   ./scripts/install_openfga.sh
-   ./scripts/install_lakekeeper.sh
-   ```
+# Install MinIO (S3-compatible storage)
+./install_minio.sh
 
-2. **Orchestration Layer**
+# Install Lakekeeper (Iceberg catalog)
+./install_lakekeeper.sh
 
-   ```bash
-   cd infra/k8s/orchestration
-   ./scripts/install_kafka.sh
-   ./scripts/install_kafka_ui.sh
-   ./scripts/install_nifi.sh
-   ./scripts/install_airflow.sh
+# Install Keycloak (OAuth2 provider)
+./install_keycloak.sh
+```
 
-   # Apply RBAC for Spark jobs
-   kubectl apply -f rbac/spark-submit-clusterrole.yaml
-   kubectl apply -f rbac/spark-submit-clusterrolebinding.yaml
-   ```
+### 2. Deploy Orchestration Layer
 
-3. **Ingestion Layer**
+```bash
+cd infra/k8s/orchestration/scripts
 
-   ```bash
-   cd infra/k8s/ingestion
-   ./scripts/install_source_api.sh
-   ```
+# Install Kafka
+kubectl apply -f ../config/kafka.yaml
 
-4. **Compute Layer**
-   ```bash
-   cd infra/k8s/compute
-   ./scripts/install_spark_operators.sh
-   ./scripts/install_argocd.sh
-   ```
+# Install Airflow
+./install_airflow.sh
+```
 
-### Access URLs
+### 3. Deploy Compute Layer
 
-| Service       | URL                               | Credentials             |
-| ------------- | --------------------------------- | ----------------------- |
-| Airflow       | https://openhouse.airflow.test    | admin / admin           |
-| Kafka UI      | https://openhouse.kafka-ui.test   | No auth                 |
-| NiFi          | https://openhouse.nifi.test       | admin / adminadminadmin |
-| Keycloak      | https://openhouse.keycloak.test   | admin / admin           |
-| Lakekeeper    | https://openhouse.lakekeeper.test | admin / admin           |
-| MinIO Console | http://localhost:9001             | admin / admin123        |
+```bash
+cd infra/k8s/compute/scripts
 
-**Note**: Add hostnames to `/etc/hosts` or configure DNS
+# Install Spark Operator
+./install_spark_operators.sh
+```
+
+### 4. Deploy Ingestion
+
+```bash
+cd infra/k8s/ingestion/scripts
+
+# Deploy FinnhubProducer
+./deploy_finnhub_producer.sh
+```
+
+### 5. Start Spark Jobs
+
+```bash
+cd infra/k8s/compute/scripts
+
+# Start Bronze streaming job (Kafka → Iceberg)
+./start_load_crypto_bronze.sh
+
+# Silver batch job runs via Airflow (daily at 2 AM)
+# Or manually:
+./start_transform_crypto_silver_batch.sh
+```
+
+## Data Pipeline
+
+### Bronze Layer (Streaming)
+
+**Job**: `load-crypto-bronze`
+
+- **Source**: Kafka topic `market-data.finnhub.crypto-trades.bronze`
+- **Processing**: Avro decoding, schema validation, timestamp conversion
+- **Target**: Iceberg table `bronze.crypto_trades_raw`
+- **Partitioning**: By `trade_date` and `exchange`
+- **Trigger**: 10-second micro-batches
+
+### Silver Layer (Batch)
+
+**Job**: `transform-crypto-silver-batch`
+
+- **Source**: Bronze Iceberg table
+- **Processing**: 1-hour OHLCV aggregation, VWAP calculation
+- **Target**: Iceberg table `silver.crypto_ohlcv_1h`
+- **Partitioning**: By `agg_date` and `exchange`
+- **Schedule**: Daily at 2 AM via Airflow
+
+## Key Features
+
+### Real-time Ingestion
+
+- WebSocket connection to Finnhub API
+- Avro message encoding
+- Kafka SASL authentication
+- Auto-reconnection
+
+### Streaming Processing
+
+- Spark Structured Streaming
+- Checkpoint-based recovery
+- Exactly-once semantics (Kafka offsets)
+- Schema evolution support
+
+### Batch Processing
+
+- Dual Iceberg catalog (Bronze + Silver)
+- Window-based OHLCV aggregation
+- Date range parameterization
+- Airflow orchestration
+
+### Data Lakehouse
+
+- Apache Iceberg tables
+- Time travel queries
+- Schema evolution
+- ACID transactions
+- S3-compatible storage (MinIO)
+
+### Security
+
+- OAuth2 authentication (Keycloak)
+- SASL authentication (Kafka)
+- Kubernetes secrets management
+- TLS encryption
+
+## Monitoring
+
+### Check Data Ingestion
+
+```bash
+# FinnhubProducer logs
+kubectl logs -l app=finnhub-producer -f
+
+# Kafka messages
+kubectl exec -it kafka-0 -- kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic market-data.finnhub.crypto-trades.bronze \
+  --max-messages 10
+```
+
+### Check Spark Jobs
+
+```bash
+# List SparkApplications
+kubectl get sparkapplications
+
+# Bronze job logs
+kubectl logs -l spark-role=driver,spark-app-name=load-crypto-bronze -f
+
+# Silver job logs
+kubectl logs -l spark-role=driver,spark-app-name=transform-crypto-silver-batch -f
+```
+
+### Query Iceberg Tables
+
+```bash
+# Connect to Spark shell
+kubectl run spark-shell -it --rm --image=apache/spark:3.5.0-python3 \
+  -- /opt/spark/bin/pyspark
+
+# Query Bronze
+spark.sql("SELECT COUNT(*) FROM bronze.bronze.crypto_trades_raw").show()
+spark.sql("SELECT * FROM bronze.bronze.crypto_trades_raw LIMIT 10").show()
+
+# Query Silver
+spark.sql("SELECT COUNT(*) FROM silver.silver.crypto_ohlcv_1h").show()
+spark.sql("SELECT * FROM silver.silver.crypto_ohlcv_1h ORDER BY hour_start DESC LIMIT 10").show()
+```
+
+## Documentation
+
+- [FinnhubProducer](FinnhubProducer/README.md) - Real-time data producer
+- [Bronze Spark Job](spark-jobs/load-crypto-bronze/README.md) - Streaming ingestion
+- [Silver Spark Job](spark-jobs/transform-crypto-silver-batch/README.md) - OHLCV aggregation
+- [Airflow DAGs](airflow-dags-deployment/README.md) - Workflow orchestration
+- [Infrastructure](infra/k8s/README.md) - Kubernetes setup
+
+## Technology Stack
+
+- **Languages**: Python 3.9+
+- **Data Processing**: Apache Spark 3.5.0
+- **Streaming**: Apache Kafka, Structured Streaming
+- **Storage**: Apache Iceberg, MinIO (S3)
+- **Catalog**: Lakekeeper (Iceberg REST)
+- **Orchestration**: Apache Airflow, Spark Operator
+- **Container**: Docker, Kubernetes
+- **Auth**: Keycloak (OAuth2)
+
+## License
+
+This project is for educational purposes (graduation research).
