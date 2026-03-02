@@ -1,8 +1,7 @@
 """
 DAG: crypto-ohlcv-silver-batch
 
-Batch job: đọc dữ liệu từ Bronze layer, tổng hợp OHLCV, ghi vào Silver layer.
-Arguments truyền vào Spark job: start_date, end_date (YYYY-MM-DD).
+Batch job: reads data from Bronze layer, aggregates OHLCV, writes to Silver layer.
 """
 
 import json
@@ -29,11 +28,6 @@ from spark_lifecycle_trigger import SparkLifecycleTrigger
 
 logger = logging.getLogger("airflow.task")
 
-# ==============================================================================
-# PLATFORM SETTINGS
-# ==============================================================================
-PLATFORM_NAMESPACE = "default"
-PLATFORM_SERVICE_ACCOUNT = "openhouse-spark-operator-spark"
 
 # ==============================================================================
 # SPARK HISTORY LINK
@@ -57,9 +51,10 @@ class SparkHistoryLink(BaseOperatorLink):
 # ==============================================================================
 # SPARK LIFECYCLE TRIGGER (Async)
 # ==============================================================================
-# NOTE: SparkLifecycleTrigger được import từ spark_lifecycle_trigger.py
-# KHÔNG được define trigger class trong DAG file vì Airflow load DAG với
-# module prefix hash 'unusual_prefix_...' không thể import được từ Triggerer.
+# NOTE: SparkLifecycleTrigger is imported from spark_lifecycle_trigger.py
+# The trigger class MUST NOT be defined inside the DAG file because Airflow
+# loads DAGs with a hashed module prefix 'unusual_prefix_...' which prevents
+# the Triggerer from importing it.
 
 
 # ==============================================================================
@@ -93,7 +88,7 @@ class SparkLifecycleSensor(BaseSensorOperator):
             context["ti"].xcom_push(key="spark_app_id", value=app_id)
 
         if status == "success":
-            logger.info(f"✅ Spark Job Succeeded. App ID: {app_id}")
+            logger.info(f"[OK] Spark Job Succeeded. App ID: {app_id}")
             return
 
         logger.warning(
@@ -103,7 +98,7 @@ class SparkLifecycleSensor(BaseSensorOperator):
 
         if real_state in ["COMPLETED", "SUCCEEDED"]:
             logger.info(
-                f"✅ Verified Success via Worker API. App ID: {real_id}"
+                f"[OK] Verified Success via Worker API. App ID: {real_id}"
             )
             if real_id:
                 context["ti"].xcom_push(key="spark_app_id", value=real_id)
@@ -182,13 +177,15 @@ def delete_spark_job_on_failure(context):
     job_details = ti.xcom_pull(task_ids="submit_spark_job", key="return_value")
 
     if not job_details:
-        logger.warning("⚠️ No job details in XCom. Job might not have started.")
+        logger.warning(
+            "[WARN] No job details in XCom. Job might not have started."
+        )
         return
 
     name = job_details.get("job_name")
     namespace = job_details.get("namespace")
 
-    logger.info(f"🛑 Deleting Spark Job on failure: {name}...")
+    logger.info(f"[ACTION] Deleting Spark Job on failure: {name}...")
     try:
         hook = KubernetesHook(conn_id="kubernetes_default")
         hook.delete_custom_object(
@@ -198,20 +195,13 @@ def delete_spark_job_on_failure(context):
             plural="sparkapplications",
             name=name,
         )
-        logger.info(f"✅ Spark Job Deleted: {name}")
+        logger.info(f"[OK] Spark Job Deleted: {name}")
     except Exception as e:
-        logger.error(f"❌ Failed to delete job: {e}")
+        logger.error(f"[ERROR] Failed to delete job: {e}")
 
 
-# ==============================================================================
-# MANIFEST TEMPLATE PATH
-# Template file nằm cùng repo Airflow tại: manifests/transform-crypto-silver-batch.yaml.j2
-# ==============================================================================
-MANIFEST_TEMPLATE_PATH = (
-    Path(__file__).parent.parent
-    / "manifests"
-    / "transform-crypto-silver-batch.yaml.j2"
-)
+# Directory containing all .j2 manifest templates
+MANIFEST_DIR = Path(__file__).parent.parent / "manifests"
 
 # ==============================================================================
 # DAG DEFINITION
@@ -234,23 +224,60 @@ with DAG(
         "dry_run": Param(
             False, type="boolean", description="Skip K8s submission."
         ),
-        # Mặc định: chạy cho ngày hôm qua (ds = execution date của Airflow)
-        "start_date": Param(
-            "{{ ds }}", type="string", description="Start date YYYY-MM-DD"
+        # ---------- Job Identity ----------
+        "job_name_prefix": Param(
+            None,
+            type=["string", "null"],
+            description="[REQUIRED] Prefix for the SparkApplication name on K8s, e.g. 'transform-crypto-silver-batch'.",
         ),
-        "end_date": Param(
-            "{{ macros.ds_add(ds, 1) }}",
+        "manifest_template": Param(
+            None,
+            type=["string", "null"],
+            description="[REQUIRED] Filename of the .j2 manifest template in the manifests/ directory, e.g. 'transform-crypto-silver-batch.yaml.j2'.",
+        ),
+        # ---------- Application ----------
+        "image_repo": Param(
+            None,
+            type=["string", "null"],
+            description="[REQUIRED] Docker image repository, e.g. 'myrepo/my-spark-job'.",
+        ),
+        "image_tag": Param(
+            "latest",
             type="string",
-            description="End date YYYY-MM-DD",
+            description="Docker image tag, e.g. 'v1.0'.",
         ),
-        "image": Param(
-            "hungvt0110/transform-crypto-silver-batch:v0.2", type="string"
+        "main_file_path": Param(
+            None,
+            type=["string", "null"],
+            description="[REQUIRED] Path to the main entrypoint file inside the container, e.g. 'local:///app/src/main.py'.",
         ),
+        "main_class": Param(
+            None,
+            type=["string", "null"],
+            description="Main class for Java/Scala jobs. Leave null for Python jobs.",
+        ),
+        # ---------- Resources ----------
         "driver_cores": Param(1, type="integer"),
         "driver_memory": Param("2g", type="string"),
         "executor_cores": Param(2, type="integer"),
         "executor_memory": Param("2g", type="string"),
         "executor_instances": Param(2, type="integer"),
+        # ---------- Advanced Overrides ----------
+        "app_arguments": Param(
+            None,
+            type=["array", "null"],
+            description="List of arguments passed to the Spark job (overrides 'arguments' defined in the manifest).",
+        ),
+        "user_env_vars": Param(
+            None,
+            type=["object", "null"],
+            description='Extra env vars injected into driver & executor, e.g. {"MY_KEY": "value"}.',
+        ),
+        "spark_conf": Param(
+            None,
+            type=["object", "null"],
+            description='Spark config key-values to merge/override into the manifest sparkConf, e.g. {"spark.sql.shuffle.partitions": "400"}.',
+        ),
     },
 ) as dag:
 
@@ -261,31 +288,69 @@ with DAG(
     def render_manifest(**context):
         params = context["params"]
         ts = context["ts_nodash"].lower()
-        job_name = f"transform-crypto-silver-batch-{ts}"
+        job_name = f"{params['job_name_prefix']}-{ts}"
 
-        # Đọc Jinja2 template từ file .j2 trong repo Airflow
-        template_str = MANIFEST_TEMPLATE_PATH.read_text()
+        # ------------------------------------------------------------------
+        # Load manifest template from params
+        # ------------------------------------------------------------------
+        manifest_template_name = params.get("manifest_template")
+        if not manifest_template_name:
+            raise ValueError(
+                "param 'manifest_template' is required. "
+                "Provide the .j2 filename, e.g. 'transform-crypto-silver-batch.yaml.j2'"
+            )
+
+        manifest_template_path = MANIFEST_DIR / manifest_template_name
+        if not manifest_template_path.exists():
+            raise FileNotFoundError(
+                f"Manifest template not found: {manifest_template_path}"
+            )
+
+        logger.info(f"[manifest_template] Loading: {manifest_template_path}")
+
+        # Read and render the Jinja2 template
+        template_str = manifest_template_path.read_text()
         template = jinja2.Template(template_str)
         rendered = template.render(
             job_name=job_name,
-            namespace=PLATFORM_NAMESPACE,
-            service_account=PLATFORM_SERVICE_ACCOUNT,
-            image=params["image"],
-            start_date=params["start_date"],
-            end_date=params["end_date"],
+            image_repo=params["image_repo"],
+            image_tag=params["image_tag"],
+            main_file_path=params["main_file_path"],
+            main_class=params.get("main_class"),
             driver_cores=params["driver_cores"],
             driver_memory=params["driver_memory"],
             executor_cores=params["executor_cores"],
             executor_memory=params["executor_memory"],
             executor_instances=params["executor_instances"],
+            app_arguments=params.get("app_arguments") or [],
+            user_env_vars=params.get("user_env_vars") or {},
         )
 
         manifest_dict = yaml.safe_load(rendered)
 
+        # ------------------------------------------------------------------
+        # Merge spark_conf param into spec.sparkConf of the manifest:
+        #   - New key   → add
+        #   - Existing  → override
+        # ------------------------------------------------------------------
+        extra_spark_conf = params.get("spark_conf") or {}
+        if extra_spark_conf:
+            existing_conf = manifest_dict.get("spec", {}).get("sparkConf", {})
+            merged_conf = {**existing_conf, **extra_spark_conf}
+            manifest_dict.setdefault("spec", {})["sparkConf"] = merged_conf
+            logger.info(
+                f"[spark_conf] Merged {len(extra_spark_conf)} override(s) into sparkConf."
+            )
+
+        # ------------------------------------------------------------------
+        # Override arguments if app_arguments param is provided
+        # ------------------------------------------------------------------
+        app_arguments = params.get("app_arguments")
+        if app_arguments is not None:
+            manifest_dict.setdefault("spec", {})["arguments"] = app_arguments
+
         logger.info("\n" + "=" * 60)
-        logger.info(
-            f"[MANIFEST] job_name={job_name}, start={params['start_date']}, end={params['end_date']}"
-        )
+        logger.info(f"[MANIFEST] job_name={job_name}")
         logger.info(json.dumps(manifest_dict, indent=2))
         logger.info("=" * 60)
 
@@ -299,19 +364,19 @@ with DAG(
     submit_spark_job = DictSparkKubernetesOperator(
         task_id="submit_spark_job",
         kubernetes_conn_id="kubernetes_default",
-        namespace=PLATFORM_NAMESPACE,
+        namespace=None,  # read from manifest metadata at execution time
         application_file=spark_manifest,
         dry_run="{{ params.dry_run }}",
         do_xcom_push=True,
     )
 
     # --------------------------------------------------------------------------
-    # Task 3: Monitor (Async Sensor - chạy trên Triggerer, không chiếm Worker)
+    # Task 3: Monitor (Async Sensor - runs on Triggerer, does not occupy a Worker)
     # --------------------------------------------------------------------------
     monitor_spark_job = SparkLifecycleSensor(
         task_id="monitor_spark_job",
         name=submit_spark_job.output["job_name"],
-        namespace=PLATFORM_NAMESPACE,
+        namespace=submit_spark_job.output["namespace"],  # dynamic from XCom
         # on_failure_callback=delete_spark_job_on_failure,
     )
 
