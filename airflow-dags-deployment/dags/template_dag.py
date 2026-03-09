@@ -240,16 +240,14 @@ spec:
         "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
         "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
 
-        # Per-bucket: bronze (endpoint only — credentials handled by vended credentials)
+        # Per-bucket: bronze
         "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
 
-        # Per-bucket: silver (endpoint only — credentials handled by vended credentials)
+        # Per-bucket: silver
         "fs.s3a.bucket.silver.endpoint": "http://openhouse-minio:9000"
 
-        # Per-bucket: spark-logs (not managed by Iceberg catalog, needs explicit credentials)
+        # Per-bucket: spark-logs
         "fs.s3a.bucket.spark-logs.endpoint":   "http://openhouse-minio-log:9000"
-        "fs.s3a.bucket.spark-logs.access.key": "admin"
-        "fs.s3a.bucket.spark-logs.secret.key": "admin123"
 
     driver:
         cores: {{ driver_cores }}
@@ -266,28 +264,6 @@ spec:
               value: "3.5"
             - name: ICEBERG_VERSION
               value: "1.10.1"
-            - name: BRONZE_CATALOG_URL
-              value: "http://openhouse-lakekeeper:8181/catalog"
-            - name: BRONZE_CLIENT_ID
-              value: "spark"
-            - name: BRONZE_CLIENT_SECRET
-              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
-            - name: BRONZE_WAREHOUSE
-              value: "bronze"
-            - name: SILVER_CATALOG_URL
-              value: "http://openhouse-lakekeeper:8181/catalog"
-            - name: SILVER_CLIENT_ID
-              value: "spark"
-            - name: SILVER_CLIENT_SECRET
-              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
-            - name: SILVER_WAREHOUSE
-              value: "silver"
-            - name: KEYCLOAK_TOKEN_ENDPOINT
-              value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
-            - name: AWS_ACCESS_KEY_ID
-              value: "admin"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "admin123"
             {% for key, value in user_env_vars.items() %}
             - name: {{ key }}
               value: "{{ value }}"
@@ -307,28 +283,6 @@ spec:
               value: "3.5"
             - name: ICEBERG_VERSION
               value: "1.10.1"
-            - name: BRONZE_CATALOG_URL
-              value: "http://openhouse-lakekeeper:8181/catalog"
-            - name: BRONZE_CLIENT_ID
-              value: "spark"
-            - name: BRONZE_CLIENT_SECRET
-              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
-            - name: BRONZE_WAREHOUSE
-              value: "bronze"
-            - name: SILVER_CATALOG_URL
-              value: "http://openhouse-lakekeeper:8181/catalog"
-            - name: SILVER_CLIENT_ID
-              value: "spark"
-            - name: SILVER_CLIENT_SECRET
-              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
-            - name: SILVER_WAREHOUSE
-              value: "silver"
-            - name: KEYCLOAK_TOKEN_ENDPOINT
-              value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
-            - name: AWS_ACCESS_KEY_ID
-              value: "admin"
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "admin123"
             {% for key, value in user_env_vars.items() %}
             - name: {{ key }}
               value: "{{ value }}"
@@ -416,6 +370,11 @@ with DAG(
             type=["object", "null"],
             description='Spark config key-values to merge/override into the manifest sparkConf, e.g. {"spark.sql.shuffle.partitions": "400"}.',
         ),
+        "hadoop_conf": Param(
+            None,
+            type=["object", "null"],
+            description='Hadoop config key-values to merge/override into the manifest hadoopConf, e.g. {"fs.s3a.bucket.bronze.endpoint": "https://minio:9000"}.',
+        ),
     },
 ) as dag:
 
@@ -460,6 +419,22 @@ with DAG(
             manifest_dict.setdefault("spec", {})["sparkConf"] = merged_conf
             logger.info(
                 f"[spark_conf] Merged {len(extra_spark_conf)} override(s) into sparkConf."
+            )
+
+        # ------------------------------------------------------------------
+        # Merge hadoop_conf param into spec.hadoopConf of the manifest:
+        #   - New key   → add
+        #   - Existing  → override
+        # ------------------------------------------------------------------
+        extra_hadoop_conf = params.get("hadoop_conf") or {}
+        if extra_hadoop_conf:
+            existing_hadoop = manifest_dict.get("spec", {}).get(
+                "hadoopConf", {}
+            )
+            merged_hadoop = {**existing_hadoop, **extra_hadoop_conf}
+            manifest_dict.setdefault("spec", {})["hadoopConf"] = merged_hadoop
+            logger.info(
+                f"[hadoop_conf] Merged {len(extra_hadoop_conf)} override(s) into hadoopConf."
             )
 
         # ------------------------------------------------------------------
