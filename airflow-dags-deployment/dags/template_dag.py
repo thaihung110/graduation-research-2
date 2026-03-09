@@ -7,7 +7,6 @@ Batch job: reads data from Bronze layer, aggregates OHLCV, writes to Silver laye
 import json
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict
 
 import jinja2
@@ -38,7 +37,7 @@ class SparkHistoryLink(BaseOperatorLink):
     name = "Spark History"
 
     def get_link(self, operator, *, ti_key: TaskInstanceKey) -> str:
-        HISTORY_HOST = "http://openhouse.spark-history.test"
+        HISTORY_HOST = "https://openhouse.spark-history.test"
         try:
             spark_app_id = XCom.get_value(key="spark_app_id", ti_key=ti_key)
             if spark_app_id:
@@ -200,15 +199,159 @@ def delete_spark_job_on_failure(context):
         logger.error(f"[ERROR] Failed to delete job: {e}")
 
 
-# Directory containing all .j2 manifest templates
-MANIFEST_DIR = Path(__file__).parent.parent / "manifests"
+# ==============================================================================
+# SPARK YAML MANIFEST TEMPLATE
+# Embedded from: manifests/transform-crypto-silver-batch.yaml.j2
+# ==============================================================================
+SPARK_YAML_TEMPLATE = """
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+    name: "{{ job_name }}"
+    namespace: "default"
+    labels:
+        app: "{{ job_name_prefix }}"
+        component: etl
+        layer: silver
+spec:
+    type: Python
+    mode: cluster
+    pythonVersion: "3"
+    sparkVersion: "3.5.0"
+
+    image: "{{ image_repo }}:{{ image_tag }}"
+    imagePullPolicy: Always
+
+    mainApplicationFile: "{{ main_file_path }}"
+
+    # JARs are baked into the Docker image - no spark.jars.packages needed
+
+    sparkConf:
+        "spark.eventLog.enabled": "true"
+        "spark.eventLog.dir": "s3a://spark-logs/event-logs"
+        "spark.eventLog.compress": "true"
+
+    hadoopConf:
+        # Global settings
+        "fs.s3a.endpoint": "http://openhouse-minio:9000"
+        "fs.s3a.path.style.access": "true"
+        "fs.s3a.connection.ssl.enabled": "false"
+        "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+        "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+        "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
+
+        # Per-bucket: bronze (endpoint only — credentials handled by vended credentials)
+        "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
+
+        # Per-bucket: silver (endpoint only — credentials handled by vended credentials)
+        "fs.s3a.bucket.silver.endpoint": "http://openhouse-minio:9000"
+
+        # Per-bucket: spark-logs (not managed by Iceberg catalog, needs explicit credentials)
+        "fs.s3a.bucket.spark-logs.endpoint":   "http://openhouse-minio-log:9000"
+        "fs.s3a.bucket.spark-logs.access.key": "admin"
+        "fs.s3a.bucket.spark-logs.secret.key": "admin123"
+
+    driver:
+        cores: {{ driver_cores }}
+        coreLimit: "{{ driver_cores }}200m"
+        memory: "{{ driver_memory }}"
+        memoryOverhead: "512m"
+        serviceAccount: "openhouse-spark-operator-spark"
+        labels:
+            version: 3.5.0
+        env:
+            - name: HOME
+              value: "/tmp"
+            - name: SPARK_MINOR_VERSION
+              value: "3.5"
+            - name: ICEBERG_VERSION
+              value: "1.10.1"
+            - name: BRONZE_CATALOG_URL
+              value: "http://openhouse-lakekeeper:8181/catalog"
+            - name: BRONZE_CLIENT_ID
+              value: "spark"
+            - name: BRONZE_CLIENT_SECRET
+              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+            - name: BRONZE_WAREHOUSE
+              value: "bronze"
+            - name: SILVER_CATALOG_URL
+              value: "http://openhouse-lakekeeper:8181/catalog"
+            - name: SILVER_CLIENT_ID
+              value: "spark"
+            - name: SILVER_CLIENT_SECRET
+              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+            - name: SILVER_WAREHOUSE
+              value: "silver"
+            - name: KEYCLOAK_TOKEN_ENDPOINT
+              value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+            - name: AWS_ACCESS_KEY_ID
+              value: "admin"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "admin123"
+            {% for key, value in user_env_vars.items() %}
+            - name: {{ key }}
+              value: "{{ value }}"
+            {% endfor %}
+
+    executor:
+        cores: {{ executor_cores }}
+        instances: {{ executor_instances }}
+        memory: "{{ executor_memory }}"
+        memoryOverhead: "512m"
+        labels:
+            version: 3.5.0
+        env:
+            - name: HOME
+              value: "/tmp"
+            - name: SPARK_MINOR_VERSION
+              value: "3.5"
+            - name: ICEBERG_VERSION
+              value: "1.10.1"
+            - name: BRONZE_CATALOG_URL
+              value: "http://openhouse-lakekeeper:8181/catalog"
+            - name: BRONZE_CLIENT_ID
+              value: "spark"
+            - name: BRONZE_CLIENT_SECRET
+              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+            - name: BRONZE_WAREHOUSE
+              value: "bronze"
+            - name: SILVER_CATALOG_URL
+              value: "http://openhouse-lakekeeper:8181/catalog"
+            - name: SILVER_CLIENT_ID
+              value: "spark"
+            - name: SILVER_CLIENT_SECRET
+              value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+            - name: SILVER_WAREHOUSE
+              value: "silver"
+            - name: KEYCLOAK_TOKEN_ENDPOINT
+              value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+            - name: AWS_ACCESS_KEY_ID
+              value: "admin"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "admin123"
+            {% for key, value in user_env_vars.items() %}
+            - name: {{ key }}
+              value: "{{ value }}"
+            {% endfor %}
+
+    deps: {}
+
+    restartPolicy:
+        type: Never
+        onFailureRetries: 2
+        onFailureRetryInterval: 10
+        onSubmissionFailureRetries: 3
+        onSubmissionFailureRetryInterval: 20
+
+    timeToLiveSeconds: 3600
+"""
 
 # ==============================================================================
 # DAG DEFINITION
 # ==============================================================================
 
 with DAG(
-    dag_id="crypto-ohlcv-silver-batch",
+    dag_id="spark-job-template",
     default_args={
         "owner": "data-engineering",
         "depends_on_past": False,
@@ -229,11 +372,6 @@ with DAG(
             None,
             type=["string", "null"],
             description="[REQUIRED] Prefix for the SparkApplication name on K8s, e.g. 'transform-crypto-silver-batch'.",
-        ),
-        "manifest_template": Param(
-            None,
-            type=["string", "null"],
-            description="[REQUIRED] Filename of the .j2 manifest template in the manifests/ directory, e.g. 'transform-crypto-silver-batch.yaml.j2'.",
         ),
         # ---------- Application ----------
         "image_repo": Param(
@@ -290,29 +428,11 @@ with DAG(
         ts = context["ts_nodash"].lower()
         job_name = f"{params['job_name_prefix']}-{ts}"
 
-        # ------------------------------------------------------------------
-        # Load manifest template from params
-        # ------------------------------------------------------------------
-        manifest_template_name = params.get("manifest_template")
-        if not manifest_template_name:
-            raise ValueError(
-                "param 'manifest_template' is required. "
-                "Provide the .j2 filename, e.g. 'transform-crypto-silver-batch.yaml.j2'"
-            )
-
-        manifest_template_path = MANIFEST_DIR / manifest_template_name
-        if not manifest_template_path.exists():
-            raise FileNotFoundError(
-                f"Manifest template not found: {manifest_template_path}"
-            )
-
-        logger.info(f"[manifest_template] Loading: {manifest_template_path}")
-
-        # Read and render the Jinja2 template
-        template_str = manifest_template_path.read_text()
-        template = jinja2.Template(template_str)
+        # Read and render the embedded YAML template
+        template = jinja2.Template(SPARK_YAML_TEMPLATE)
         rendered = template.render(
             job_name=job_name,
+            job_name_prefix=params["job_name_prefix"],
             image_repo=params["image_repo"],
             image_tag=params["image_tag"],
             main_file_path=params["main_file_path"],
@@ -377,7 +497,7 @@ with DAG(
         task_id="monitor_spark_job",
         name=submit_spark_job.output["job_name"],
         namespace=submit_spark_job.output["namespace"],  # dynamic from XCom
-        # on_failure_callback=delete_spark_job_on_failure,
+        on_failure_callback=delete_spark_job_on_failure,
     )
 
     spark_manifest >> submit_spark_job >> monitor_spark_job
