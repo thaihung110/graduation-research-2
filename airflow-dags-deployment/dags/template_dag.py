@@ -228,8 +228,20 @@ spec:
 
     sparkConf:
         "spark.eventLog.enabled": "true"
-        "spark.eventLog.dir": "s3a://spark-logs/event-logs"
+        "spark.eventLog.dir": "s3a://spark-events/logs"
         "spark.eventLog.compress": "true"
+
+        # Spark History Server hints: allow History Server to read and display
+        # this application while it is still running (in-progress v1 .inprogress file).
+        spark.history.fs.inProgressOptimization.enabled: "true"
+        spark.history.fs.update.interval: "10s"
+        spark.history.fs.logDirectory: "s3a://spark-events/logs"
+
+        # S3A resilience: keep event log writable over long-running jobs.
+        "spark.hadoop.fs.s3a.connection.ttl": "300000"
+        "spark.hadoop.fs.s3a.attempts.maximum": "5"
+        "spark.hadoop.fs.s3a.retry.limit": "5"
+        "spark.hadoop.fs.s3a.retry.interval": "500ms"
 
     hadoopConf:
         # Global settings
@@ -444,8 +456,19 @@ with DAG(
         if app_arguments is not None:
             manifest_dict.setdefault("spec", {})["arguments"] = app_arguments
 
+        # Inject spark.app.id = "spark-<job_name>" so that:
+        # - Event log file: spark-<job_name>.zstd
+        # - Spark History UI App ID: spark-<job_name>
+        # - CRD sparkApplicationId: spark-<job_name> (operator reads from driver REST API)
+        spark_app_id = f"spark-{job_name}"
+        manifest_dict.setdefault("spec", {}).setdefault("sparkConf", {})[
+            "spark.app.id"
+        ] = spark_app_id
+
         logger.info("\n" + "=" * 60)
-        logger.info(f"[MANIFEST] job_name={job_name}")
+        logger.info(
+            f"[MANIFEST] job_name={job_name} spark.app.id={spark_app_id}"
+        )
         logger.info(json.dumps(manifest_dict, indent=2))
         logger.info("=" * 60)
 

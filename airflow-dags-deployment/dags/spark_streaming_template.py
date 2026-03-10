@@ -46,10 +46,21 @@ class DictSparkKubernetesOperator(SparkKubernetesOperator):
                 return {"job_name": name, "namespace": ns}
 
             hook = KubernetesHook(conn_id=self.kubernetes_conn_id)
-            logger.info(f"Submitting SparkApplication: {name}")
-            hook.create_custom_object(
-                "sparkoperator.k8s.io", "v1beta2", "sparkapplications", body, ns
+            logger.info(
+                f"Submitting SparkApplication: {name} in namespace: {ns}"
             )
+            try:
+                hook.create_custom_object(
+                    group="sparkoperator.k8s.io",
+                    version="v1beta2",
+                    plural="sparkapplications",
+                    body=body,
+                    namespace=ns,
+                )
+                logger.info(f"SparkApplication {name} submitted successfully.")
+            except Exception as e:
+                logger.error(f"Submission failed: {e}")
+                raise
 
             context["ti"].xcom_push(key="job_name", value=name)
             context["ti"].xcom_push(key="namespace", value=ns)
@@ -67,7 +78,7 @@ apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
     name: "{{ job_name }}"
-    namespace: "default"
+    namespace: "dmp-lakehouse-demo"
     labels:
         app: "{{ job_name_prefix }}"
         component: etl
@@ -85,8 +96,27 @@ spec:
 
     sparkConf:
         "spark.eventLog.enabled": "true"
-        "spark.eventLog.dir": "s3a://spark-logs/event-logs"
+        "spark.eventLog.dir": "s3a://spark-events/logs"
         "spark.eventLog.compress": "true"
+
+        # Spark History Server hints.
+        spark.history.fs.inProgressOptimization.enabled: "true"
+        spark.history.fs.update.interval: "10s"
+        spark.history.fs.logDirectory: "s3a://spark-events/logs"
+
+        # ── Event log rolling (MANDATORY for S3/MinIO) ───────────────────────
+        # S3/MinIO is an object store — it does NOT support the Syncable/flush
+        # API. A v1 single .inprogress file is NEVER visible while the app runs
+        # because objects are only uploaded atomically on stream close.
+        # Rolling splits the log into chunks; each chunk is uploaded to S3
+        # when it reaches maxFileSize → History Server can read completed chunks.
+        # Minimum allowed value for maxFileSize is 10m.
+        "spark.eventLog.rolling.enabled": "true"
+        "spark.eventLog.rolling.maxFileSize": "10m"
+
+        # Downgrade S3A Syncable exception to a warning (instead of error)
+        # so the event log writer does not crash when flush() is unsupported.
+        "spark.hadoop.fs.s3a.downgrade.syncable.exceptions": "true"
 
     hadoopConf:
         "fs.s3a.endpoint": "http://openhouse-minio:9000"
@@ -104,7 +134,10 @@ spec:
         coreLimit: "{{ driver_cores }}200m"
         memory: "{{ driver_memory }}"
         memoryOverhead: "512m"
-        serviceAccount: "openhouse-spark-operator-spark"
+        serviceAccount: "spark-operator-spark"
+        # Allow driver 60s to finalize event log (rename appstatus.inprogress)
+        # and flush checkpoint before pod is forcefully killed.
+        terminationGracePeriodSeconds: 60
         labels:
             version: 3.5.0
         env:
@@ -141,7 +174,7 @@ spec:
     deps: {}
 
     restartPolicy:
-        type: Always
+        type: Never
 
     timeToLiveSeconds: 3600
 """
@@ -225,7 +258,18 @@ with DAG(
         if app_arguments is not None:
             manifest_dict.setdefault("spec", {})["arguments"] = app_arguments
 
-        logger.info(f"[MANIFEST] job_name={job_name}")
+        # Inject spark.app.id = "spark-<job_name>" so that:
+        # - Event log file: spark-<job_name>.zstd
+        # - Spark History UI App ID: spark-<job_name>
+        # - CRD sparkApplicationId: spark-<job_name> (operator reads from driver REST API)
+        # This allows 1-to-1 correlation between CRD and Spark History UI.
+        spark_app_id = f"spark-{job_name}"
+        manifest_dict.setdefault("spec", {}).setdefault("sparkConf", {})[
+            "spark.app.id"
+        ] = spark_app_id
+        logger.info(
+            f"[MANIFEST] job_name={job_name} spark.app.id={spark_app_id}"
+        )
         return manifest_dict
 
     spark_manifest = render_manifest()
@@ -233,7 +277,7 @@ with DAG(
     submit_spark_job = DictSparkKubernetesOperator(
         task_id="submit_spark_job",
         kubernetes_conn_id="kubernetes_default",
-        namespace=None,
+        namespace="dmp-lakehouse-demo",
         application_file=spark_manifest,
         dry_run="{{ params.dry_run }}",
         do_xcom_push=True,
