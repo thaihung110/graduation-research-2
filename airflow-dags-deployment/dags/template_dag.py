@@ -208,7 +208,7 @@ apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
     name: "{{ job_name }}"
-    namespace: "default"
+    namespace: "dmp-lakehouse-demo"
     labels:
         app: "{{ job_name_prefix }}"
         component: etl
@@ -231,42 +231,34 @@ spec:
         "spark.eventLog.dir": "s3a://spark-events/logs"
         "spark.eventLog.compress": "true"
 
-        # Spark History Server hints: allow History Server to read and display
-        # this application while it is still running (in-progress v1 .inprogress file).
-        spark.history.fs.inProgressOptimization.enabled: "true"
-        spark.history.fs.update.interval: "10s"
-        spark.history.fs.logDirectory: "s3a://spark-events/logs"
+        # ── Event log rolling (MANDATORY for S3/MinIO) ───────────────────────
+        # S3/MinIO is an object store — it does NOT support the Syncable/flush API.
+        # Rolling splits the log into chunks; each chunk is uploaded when it reaches
+        # maxFileSize → Spark History Server can read completed chunks for Incomplete apps.
+        # Minimum allowed value for maxFileSize is 10m.
+        "spark.eventLog.rolling.enabled": "true"
+        "spark.eventLog.rolling.maxFileSize": "10m"
 
-        # S3A resilience: keep event log writable over long-running jobs.
-        "spark.hadoop.fs.s3a.connection.ttl": "300000"
-        "spark.hadoop.fs.s3a.attempts.maximum": "5"
-        "spark.hadoop.fs.s3a.retry.limit": "5"
-        "spark.hadoop.fs.s3a.retry.interval": "500ms"
+        # Downgrade S3A Syncable exception to a warning (instead of error)
+        # so the event log writer does not crash when flush() is unsupported.
+        "spark.hadoop.fs.s3a.downgrade.syncable.exceptions": "true"
 
     hadoopConf:
-        # Global settings
-        "fs.s3a.endpoint": "http://openhouse-minio:9000"
+        "fs.s3a.endpoint": "http://storage-minio:9000"
         "fs.s3a.path.style.access": "true"
         "fs.s3a.connection.ssl.enabled": "false"
         "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
         "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
         "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
 
-        # Per-bucket: bronze
-        "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
-
-        # Per-bucket: silver
-        "fs.s3a.bucket.silver.endpoint": "http://openhouse-minio:9000"
-
-        # Per-bucket: spark-logs
-        "fs.s3a.bucket.spark-logs.endpoint":   "http://openhouse-minio-log:9000"
-
     driver:
         cores: {{ driver_cores }}
         coreLimit: "{{ driver_cores }}200m"
         memory: "{{ driver_memory }}"
         memoryOverhead: "512m"
-        serviceAccount: "openhouse-spark-operator-spark"
+        serviceAccount: "spark-operator-spark"
+        # Allow driver time to finalize event log / checkpoint on termination.
+        terminationGracePeriodSeconds: 60
         labels:
             version: 3.5.0
         env:
@@ -482,7 +474,7 @@ with DAG(
     submit_spark_job = DictSparkKubernetesOperator(
         task_id="submit_spark_job",
         kubernetes_conn_id="kubernetes_default",
-        namespace=None,  # read from manifest metadata at execution time
+        namespace="dmp-lakehouse-demo",  # read from manifest metadata at execution time
         application_file=spark_manifest,
         dry_run="{{ params.dry_run }}",
         do_xcom_push=True,

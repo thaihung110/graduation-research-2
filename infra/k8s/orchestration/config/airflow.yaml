@@ -771,7 +771,7 @@ workers:
     size: 100Gi
 
     # If using a custom storageClass, pass name ref to all StatefulSets here
-    storageClassName: standard
+    storageClassName: hostpath
 
     # Execute init container to chown log directory.
     # This is currently only needed in kind, due to usage
@@ -1826,7 +1826,7 @@ triggerer:
     # Volume size for triggerer StatefulSet
     size: 100Gi
     # If using a custom storageClass, pass name ref to all statefulSets here
-    storageClassName: standard
+    storageClassName: hostpath
     # Execute init container to chown log directory.
     # This is currently only needed in kind, due to usage
     # of local-path provisioner.
@@ -1938,7 +1938,13 @@ triggerer:
     securityContexts:
       container: {}
 
-  env: []
+  # Add dags folder to PYTHONPATH so Triggerer can import custom trigger modules
+  # (e.g. spark_lifecycle_trigger.py). Without this, Triggerer's sys.path does
+  # NOT include the dags folder, causing ModuleNotFoundError at trigger import time.
+  # Ref: https://airflow.apache.org/docs/helm-chart/stable/parameters-ref.html#triggerer
+  env:
+    - name: PYTHONPATH
+      value: "/opt/airflow/dags/repo/dags"
 
   # Allow KEDA autoscaling.
   keda:
@@ -2609,7 +2615,7 @@ redis:
     # Volume size for worker StatefulSet
     size: 1Gi
     # If using a custom storageClass, pass name ref to all statefulSets here
-    storageClassName: standard
+    storageClassName: hostpath
     # Annotations to add to redis volumes
     annotations: {}
     # the name of an existing PVC to use
@@ -2825,7 +2831,7 @@ postgresql:
   primary:
     persistence:
       enabled: true
-      storageClass: standard
+      storageClass: hostpath
       size: 8Gi
 
 # Config settings to go into the mounted airflow.cfg
@@ -2952,7 +2958,7 @@ dags:
     # Volume size for dags
     size: 1Gi
     # If using a custom storageClass, pass name here
-    storageClassName: standard
+    storageClassName: hostpath
     # access mode of the persistent volume
     accessMode: ReadWriteOnce
     ## the name of an existing PVC to use
@@ -3087,6 +3093,6 @@ logs:
     # Annotations for the logs PVC
     annotations: {}
     # If using a custom storageClass, pass name here
-    storageClassName: standard
+    storageClassName: hostpath
     ## the name of an existing PVC to use
     existingClaim:

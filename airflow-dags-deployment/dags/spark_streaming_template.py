@@ -7,13 +7,16 @@ This is a "fire-and-forget" DAG: it does not monitor the job after submission.
 
 import json
 import logging
+import time
 from datetime import datetime
 
 import jinja2
 import yaml
 from airflow import DAG
 from airflow.decorators import task
+from airflow.models import BaseOperatorLink, XCom
 from airflow.models.param import Param
+from airflow.models.taskinstance import TaskInstanceKey
 from airflow.providers.cncf.kubernetes.hooks.kubernetes import KubernetesHook
 from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
     SparkKubernetesOperator,
@@ -23,9 +26,29 @@ logger = logging.getLogger("airflow.task")
 
 
 # ==============================================================================
+# SPARK HISTORY LINK
+# ==============================================================================
+
+
+class SparkHistoryLink(BaseOperatorLink):
+    name = "Spark History"
+
+    def get_link(self, operator, *, ti_key: TaskInstanceKey) -> str:
+        HISTORY_HOST = "https://openhouse.spark-history.test"
+        try:
+            spark_app_id = XCom.get_value(key="spark_app_id", ti_key=ti_key)
+            if spark_app_id:
+                return f"{HISTORY_HOST}/history/{spark_app_id}"
+        except Exception:
+            pass
+        return HISTORY_HOST
+
+
+# ==============================================================================
 # DICT SPARK KUBERNETES OPERATOR
 # ==============================================================================
 class DictSparkKubernetesOperator(SparkKubernetesOperator):
+    operator_extra_links = (SparkHistoryLink(),)
     template_fields = list(SparkKubernetesOperator.template_fields) + [
         "dry_run"
     ]
@@ -40,10 +63,23 @@ class DictSparkKubernetesOperator(SparkKubernetesOperator):
             meta = body.get("metadata", {})
             name = meta.get("name")
             ns = self.namespace or meta.get("namespace", "default")
+            spark_app_id = (
+                body.get("spec", {})
+                .get("sparkConf", {})
+                .get("spark.app.id")
+            )
 
             if str(self.dry_run).lower() in ["true", "1", "yes"]:
                 logger.info(f"[DRY RUN] Would submit {name}")
-                return {"job_name": name, "namespace": ns}
+                if spark_app_id:
+                    context["ti"].xcom_push(
+                        key="spark_app_id", value=spark_app_id
+                    )
+                return {
+                    "job_name": name,
+                    "namespace": ns,
+                    "spark_app_id": spark_app_id,
+                }
 
             hook = KubernetesHook(conn_id=self.kubernetes_conn_id)
             logger.info(
@@ -62,10 +98,42 @@ class DictSparkKubernetesOperator(SparkKubernetesOperator):
                 logger.error(f"Submission failed: {e}")
                 raise
 
+            # Spark Operator sets status.sparkApplicationId once the driver has started.
+            # That ID is what History Server uses (event log dir name). Poll CRD for it.
+            real_app_id = None
+            poll_interval_sec = 5
+            max_wait_sec = 120
+            for _ in range(max_wait_sec // poll_interval_sec):
+                try:
+                    crd = hook.get_custom_object(
+                        group="sparkoperator.k8s.io",
+                        version="v1beta2",
+                        namespace=ns,
+                        plural="sparkapplications",
+                        name=name,
+                    )
+                    real_app_id = (crd.get("status") or {}).get("sparkApplicationId")
+                    if real_app_id:
+                        logger.info(
+                            f"Got sparkApplicationId from CRD: {real_app_id}"
+                        )
+                        break
+                except Exception as e:
+                    logger.debug("Poll CRD for sparkApplicationId: %s", e)
+                time.sleep(poll_interval_sec)
+
+            spark_app_id = real_app_id or spark_app_id
+
             context["ti"].xcom_push(key="job_name", value=name)
             context["ti"].xcom_push(key="namespace", value=ns)
+            if spark_app_id:
+                context["ti"].xcom_push(key="spark_app_id", value=spark_app_id)
 
-            return {"job_name": name, "namespace": ns}
+            return {
+                "job_name": name,
+                "namespace": ns,
+                "spark_app_id": spark_app_id,
+            }
         else:
             return super().execute(context)
 
@@ -99,11 +167,6 @@ spec:
         "spark.eventLog.dir": "s3a://spark-events/logs"
         "spark.eventLog.compress": "true"
 
-        # Spark History Server hints.
-        spark.history.fs.inProgressOptimization.enabled: "true"
-        spark.history.fs.update.interval: "10s"
-        spark.history.fs.logDirectory: "s3a://spark-events/logs"
-
         # ── Event log rolling (MANDATORY for S3/MinIO) ───────────────────────
         # S3/MinIO is an object store — it does NOT support the Syncable/flush
         # API. A v1 single .inprogress file is NEVER visible while the app runs
@@ -119,15 +182,13 @@ spec:
         "spark.hadoop.fs.s3a.downgrade.syncable.exceptions": "true"
 
     hadoopConf:
-        "fs.s3a.endpoint": "http://openhouse-minio:9000"
+        "fs.s3a.endpoint": "http://storage-minio:9000"
         "fs.s3a.path.style.access": "true"
         "fs.s3a.connection.ssl.enabled": "false"
         "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
         "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
         "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
-        "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
-        "fs.s3a.bucket.silver.endpoint": "http://openhouse-minio:9000"
-        "fs.s3a.bucket.spark-logs.endpoint":   "http://openhouse-minio-log:9000"
+
 
     driver:
         cores: {{ driver_cores }}

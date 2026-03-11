@@ -16,7 +16,7 @@ spec:
   # Spark image with Python support and application code
   # Build and push using: cd spark-jobs/load-crypto-bronze && ./build-image.sh
   # Image is available at: https://hub.docker.com/r/hungvt0110/load-crypto-bronze
-  image: hungvt0110/load-crypto-bronze:latest
+  image: hungvt0110/load-crypto-bronze:v0.3
 
   imagePullPolicy: Always
 
@@ -34,22 +34,74 @@ spec:
   # Note: Most Iceberg/lakekeeper configs are set in Python code (load_crypto_bronze.py)
   # Only set configs here that must be set before SparkSession creation
   sparkConf:
-    # JARs packages - must be set before SparkSession creation
-    # Includes: Iceberg, Kafka connector, Hadoop AWS
-    # Note: Using spark-sql-kafka-0-10_2.12 (Scala 2.12) with Spark 3.5.0
-    "spark.jars.packages": "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-aws:3.3.4"
-    # Ivy cache to /tmp (always writable in pods)
-    "spark.jars.ivy": "/tmp/.ivy2"
+    # JARs packages are now baked into the custom Docker image.
+    # We no longer need spark.jars.packages or spark.jars.ivy here.
+
     # Kafka consumer config
     "spark.sql.streaming.kafka.useDeprecatedOffsetFetching": "false"
 
+    # -------------------------------------------------------
+    # Spark History Server - Event Log Configuration
+    # Ghi event logs vào MinIO bucket riêng (dùng account logs)
+    # -------------------------------------------------------
+    "spark.eventLog.enabled": "true"
+    # Trỏ về thư mục gốc event-logs (phải tồn tại sẵn trong MinIO)
+    # Spark tự tạo file log với tên = applicationId bên trong thư mục này
+    # KHÔNG dùng sub-directory per-job vì Spark yêu cầu path phải tồn tại trước
+    "spark.eventLog.dir": "s3a://spark-logs/event-logs"
+    "spark.eventLog.compress": "true"
+
+    # -------------------------------------------------------
+    # Credential Vending — Bước 3 (gravitino-credential-vending-minio.md)
+    # -------------------------------------------------------
+    # Yêu cầu Gravitino Iceberg REST vend S3 credentials thay vì dùng
+    # credentials tĩnh trong hadoopConf.
+    # Xác nhận bởi docs: "set spark.sql.catalog.rest.header.X-Iceberg-Access-Delegation
+    #                      = vended-credentials in the client side"
+    "spark.sql.catalog.lakekeeper.header.X-Iceberg-Access-Delegation": "vended-credentials"
+
+    # MinIO FileIO configuration (PHẢI set thủ công — Bước 3)
+    # Credential vending chỉ trả về access key + secret key.
+    # Endpoint và path-style-access KHÔNG tự động chuyển từ server sang client.
+    # Iceberg S3FileIO (không phải Hadoop S3A) cần các config này để kết nối MinIO.
+    "spark.sql.catalog.lakekeeper.s3.endpoint": "http://openhouse-minio:9000"
+    "spark.sql.catalog.lakekeeper.s3.path-style-access": "true"
+
   # Hadoop configuration for MinIO (S3-compatible)
+  # Sử dụng 2 MinIO server khác nhau qua per-bucket configuration:
+  #   - openhouse-minio:9000      -> bucket 'bronze' (Iceberg data)
+  #   - openhouse-minio-log:9000  -> bucket 'spark-logs' (event logs)
   hadoopConf:
-    "fs.s3a.endpoint": "http://openhouse-minio:9000"
+    # --- Global settings ---
+    # Global endpoint trỏ tới minio-log (eventLog.dir dùng spark-logs bucket)
+    # Per-bucket endpoint sẽ override cho từng bucket cụ thể
+    "fs.s3a.endpoint": "http://openhouse-minio-log:9000"
+    "fs.s3a.access.key": "admin"
+    "fs.s3a.secret.key": "admin123"
     "fs.s3a.path.style.access": "true"
     "fs.s3a.connection.ssl.enabled": "false"
     "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
     "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+    # Disable S3Guard (tránh lỗi 'path must be absolute' khi S3Guard không có DynamoDB)
+    "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
+
+    # -------------------------------------------------------
+    # Per-bucket: DATA bucket (bronze) -> MinIO DATA server
+    # -------------------------------------------------------
+    # COMMENTED OUT — Bước 4 (gravitino-credential-vending-minio.md)
+    # Iceberg S3FileIO nhận credentials từ Credential Vending (Gravitino).
+    # Endpoint đã set ở spark.sql.catalog.lakekeeper.s3.endpoint (Bước 3).
+    # Hadoop S3A không còn cần các config per-bucket bronze nữa.
+    "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
+    # "fs.s3a.bucket.bronze.access.key": "admin"
+    # "fs.s3a.bucket.bronze.secret.key": "admin123"
+
+    # -------------------------------------------------------
+    # Per-bucket: LOGS bucket (spark-logs) -> MinIO LOG server
+    # -------------------------------------------------------
+    "fs.s3a.bucket.spark-logs.endpoint": "http://openhouse-minio-log:9000"
+    "fs.s3a.bucket.spark-logs.access.key": "admin"
+    "fs.s3a.bucket.spark-logs.secret.key": "admin123"
 
   # Driver configuration
   driver:
@@ -68,14 +120,14 @@ spec:
       - name: SPARK_MINOR_VERSION
         value: "3.5"
       - name: ICEBERG_VERSION
-        value: "1.5.2"
+        value: "1.10.1"
       # Lakekeeper catalog configuration (matches defaults in load_crypto_bronze.py)
       - name: CATALOG_URL
-        value: "http://openhouse-lakekeeper:8181/catalog"
+        value: "http://openhouse-gravitino:9001/iceberg"
       - name: CLIENT_ID
         value: "spark"
       - name: CLIENT_SECRET
-        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+        value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
       - name: WAREHOUSE
         value: "bronze"
       - name: KEYCLOAK_TOKEN_ENDPOINT
@@ -89,13 +141,16 @@ spec:
         value: "admin"
       - name: KAFKA_SASL_PASSWORD
         value: "admin"
-      # MinIO credentials (for Iceberg warehouse)
+      # MinIO credentials (fallback global)
+      # Per-bucket credentials trong hadoopConf có ưu tiên cao hơn
       - name: AWS_ACCESS_KEY_ID
         value: "admin"
       - name: AWS_SECRET_ACCESS_KEY
         value: "admin123"
       - name: TRIGGER_INTERVAL
         value: "10 seconds"
+      - name: CHECKPOINT_LOCATION
+        value: "s3a://bronze/checkpoints/load-crypto-bronze"
 
   # Executor configuration
   # Reduced to allow Silver job to run alongside
@@ -114,14 +169,14 @@ spec:
       - name: SPARK_MINOR_VERSION
         value: "3.5"
       - name: ICEBERG_VERSION
-        value: "1.5.2"
+        value: "1.10.1"
       # Lakekeeper catalog configuration (matches defaults in load_crypto_bronze.py)
       - name: CATALOG_URL
-        value: "http://openhouse-lakekeeper:8181/catalog"
+        value: "http://openhouse-gravitino:9001/iceberg"
       - name: CLIENT_ID
         value: "spark"
       - name: CLIENT_SECRET
-        value: "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+        value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
       - name: WAREHOUSE
         value: "bronze"
       - name: KEYCLOAK_TOKEN_ENDPOINT
@@ -135,24 +190,31 @@ spec:
         value: "admin"
       - name: KAFKA_SASL_PASSWORD
         value: "admin"
-      # MinIO credentials (for Iceberg warehouse)
+      # MinIO credentials (fallback global)
+      # Per-bucket credentials trong hadoopConf có ưu tiên cao hơn
       - name: AWS_ACCESS_KEY_ID
         value: "admin"
       - name: AWS_SECRET_ACCESS_KEY
         value: "admin123"
       - name: TRIGGER_INTERVAL
         value: "10 seconds"
+      - name: CHECKPOINT_LOCATION
+        value: "s3a://bronze/checkpoints/load-crypto-bronze"
 
   # Dependencies
   # Data files are included in the Docker image, no need to specify here
   deps: {}
 
   # Restart policy
+  # CRITICAL CONFIGURATION for Streaming Job (Workaround for Iceberg Issue #12363)
+  # Iceberg REST client < 1.9.0 does not correctly refresh tokens with Keycloak.
+  # Strategy: Allow job to crash on token expiry and let K8s restart it to get a fresh token.
+  # Ensure Keycloak token lifespan is set to ~1 hour to balance stability and restart frequency.
   restartPolicy:
-    type: Never
-    onFailureRetries: 2
-    onFailureRetryInterval: 10
-    onSubmissionFailureRetries: 3
+    type: Always
+    onFailureRetries: 1000 # Effectively infinite retries for long-running streaming
+    onFailureRetryInterval: 10 # Wait 10s before restarting
+    onSubmissionFailureRetries: 5
     onSubmissionFailureRetryInterval: 20
 
   # Time to live after completion

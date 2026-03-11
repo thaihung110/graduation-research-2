@@ -107,8 +107,7 @@ controller:
     #   - "*.example.com"
     #   secretName: "example-secret"
     # -- Optionally set default ingress annotations for the Spark UI's ingress. `ingressAnnotations` in the SparkApplication spec overrides this.
-    annotations:
-      {}
+    annotations: {}
       # key1: value1
       # key2: value2
 
@@ -141,14 +140,12 @@ controller:
     annotations: {}
 
   # -- Extra labels for controller pods.
-  labels:
-    {}
+  labels: {}
     # key1: value1
     # key2: value2
 
   # -- Extra annotations for controller pods.
-  annotations:
-    {}
+  annotations: {}
     # key1: value1
     # key2: value2
 
@@ -203,8 +200,7 @@ controller:
   # Note, that each job submission will spawn a JVM within the controller pods using "/usr/local/openjdk-11/bin/java -Xmx128m".
   # Kubernetes may kill these Java processes at will to enforce resource limits. When that happens, you will see the following error:
   # 'failed to run spark-submit for SparkApplication [...]: signal: killed' - when this happens, you may want to increase memory limits.
-  resources:
-    {}
+  resources: {}
     # limits:
     #   cpu: 100m
     #   memory: 300Mi
@@ -311,14 +307,12 @@ webhook:
     annotations: {}
 
   # -- Extra labels for webhook pods.
-  labels:
-    {}
+  labels: {}
     # key1: value1
     # key2: value2
 
   # -- Extra annotations for webhook pods.
-  annotations:
-    {}
+  annotations: {}
     # key1: value1
     # key2: value2
 
@@ -374,8 +368,7 @@ webhook:
       readOnly: false
 
   # -- Pod resource requests and limits for webhook pods.
-  resources:
-    {}
+  resources: {}
     # limits:
     #   cpu: 100m
     #   memory: 300Mi
@@ -462,8 +455,7 @@ certManager:
   enable: false
   # -- The reference to the issuer.
   # @default -- A self-signed issuer will be created and used if not specified.
-  issuerRef:
-    {}
+  issuerRef: {}
     # group: cert-manager.io
     # kind: ClusterIssuer
     # name: selfsigned

@@ -7,7 +7,9 @@ set -eu
 # Configuration
 DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-hungvt0110}"
 IMAGE_NAME="${IMAGE_NAME:-transform-crypto-silver}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+# Accept tag from first argument, otherwise default to v0.1
+IMAGE_TAG="${1:-v0.1}"
 PUSH_TO_DOCKERHUB="${PUSH_TO_DOCKERHUB:-true}"
 
 # Full image name for Docker Hub

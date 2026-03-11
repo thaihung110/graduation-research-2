@@ -1,0 +1,193 @@
+# =============================================================================
+# SparkApplication manifest — streaming-test
+#
+# Purpose : Test job to validate the Kafka → Spark Streaming → Iceberg pipeline.
+# Build   : cd spark-jobs/streaming-test && ./build-image.sh v1.0
+# Image   : https://hub.docker.com/r/hungvt0110/streaming-test
+# =============================================================================
+
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: streaming-test
+  namespace: default
+  labels:
+    app: streaming-test
+    component: etl
+    layer: bronze
+
+spec:
+  type: Python
+  mode: cluster
+  pythonVersion: "3"
+  sparkVersion: "3.5.0"
+
+  # Docker image built from spark-jobs/streaming-test/Dockerfile
+  image: hungvt0110/streaming-test:v1.0
+  imagePullPolicy: Always
+
+  mainApplicationFile: local:///app/src/main.py
+
+  # Arguments: <kafka_topic> <database> <table>
+  # These are overridden at runtime by environment variables but can also be
+  # passed directly as arguments to the script.
+  arguments:
+    - "streaming-test" # Kafka topic
+    - "bronze" # Iceberg namespace / database
+    - "streaming_test_raw" # Iceberg table name
+
+  # ── Spark configuration ────────────────────────────────────────────────────
+  sparkConf:
+    # Kafka consumer
+    "spark.sql.streaming.kafka.useDeprecatedOffsetFetching": "false"
+
+    # Spark History Server — event log
+    "spark.eventLog.enabled": "true"
+    "spark.eventLog.dir": "s3a://spark-logs/event-logs"
+    "spark.eventLog.compress": "true"
+
+    # Credential Vending — instruct Gravitino REST to vend S3 credentials
+    "spark.sql.catalog.lakekeeper.header.X-Iceberg-Access-Delegation": "vended-credentials"
+
+    # MinIO S3FileIO endpoint (needed because credential vending only returns
+    # access/secret keys; the endpoint must be configured separately on the client)
+    "spark.sql.catalog.lakekeeper.s3.endpoint": "http://openhouse-minio:9000"
+    "spark.sql.catalog.lakekeeper.s3.path-style-access": "true"
+
+  # ── Hadoop / S3A configuration ─────────────────────────────────────────────
+  hadoopConf:
+    # Global: default endpoint points to the log MinIO instance
+    "fs.s3a.endpoint": "http://openhouse-minio-log:9000"
+    "fs.s3a.access.key": "admin"
+    "fs.s3a.secret.key": "admin123"
+    "fs.s3a.path.style.access": "true"
+    "fs.s3a.connection.ssl.enabled": "false"
+    "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+    "fs.s3a.metadatastore.impl": "org.apache.hadoop.fs.s3a.s3guard.NullMetadataStore"
+
+    # Per-bucket: bronze data bucket → main MinIO instance
+    # (credentials handled by Credential Vending; only endpoint override needed)
+    "fs.s3a.bucket.bronze.endpoint": "http://openhouse-minio:9000"
+
+    # Per-bucket: spark-logs bucket → log MinIO instance
+    "fs.s3a.bucket.spark-logs.endpoint": "http://openhouse-minio-log:9000"
+    "fs.s3a.bucket.spark-logs.access.key": "admin"
+    "fs.s3a.bucket.spark-logs.secret.key": "admin123"
+
+  # ── Driver ─────────────────────────────────────────────────────────────────
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "1g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    serviceAccount: openhouse-spark-operator-spark
+    env:
+      - name: HOME
+        value: "/tmp"
+      # Spark / Iceberg versions (used by Python code to build packages string if needed)
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.10.1"
+      # Iceberg REST catalog (Gravitino)
+      - name: CATALOG_URL
+        value: "http://openhouse-gravitino:9001/iceberg"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+      - name: WAREHOUSE
+        value: "bronze"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      # Kafka
+      - name: KAFKA_BOOTSTRAP_SERVERS
+        value: "openhouse-kafka:9092"
+      - name: KAFKA_TOPIC
+        value: "streaming-test"
+      - name: KAFKA_SASL_USERNAME
+        value: "admin"
+      - name: KAFKA_SASL_PASSWORD
+        value: "admin"
+      # Target table
+      - name: DATABASE
+        value: "bronze"
+      - name: TABLE
+        value: "streaming_test_raw"
+      # MinIO credentials (global fallback)
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+      # Streaming settings
+      - name: TRIGGER_INTERVAL
+        value: "30 seconds"
+      - name: MAX_OFFSETS_PER_TRIGGER
+        value: "1000"
+      - name: CHECKPOINT_LOCATION
+        value: "s3a://bronze/checkpoints/streaming-test"
+
+  # ── Executor ───────────────────────────────────────────────────────────────
+  executor:
+    cores: 1
+    instances: 1
+    memory: "1g"
+    memoryOverhead: "512m"
+    labels:
+      version: 3.5.0
+    env:
+      - name: HOME
+        value: "/tmp"
+      - name: SPARK_MINOR_VERSION
+        value: "3.5"
+      - name: ICEBERG_VERSION
+        value: "1.10.1"
+      - name: CATALOG_URL
+        value: "http://openhouse-gravitino:9001/iceberg"
+      - name: CLIENT_ID
+        value: "spark"
+      - name: CLIENT_SECRET
+        value: "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+      - name: WAREHOUSE
+        value: "bronze"
+      - name: KEYCLOAK_TOKEN_ENDPOINT
+        value: "http://openhouse-keycloak:80/realms/iceberg/protocol/openid-connect/token"
+      - name: KAFKA_BOOTSTRAP_SERVERS
+        value: "openhouse-kafka:9092"
+      - name: KAFKA_TOPIC
+        value: "streaming-test"
+      - name: KAFKA_SASL_USERNAME
+        value: "admin"
+      - name: KAFKA_SASL_PASSWORD
+        value: "admin"
+      - name: DATABASE
+        value: "bronze"
+      - name: TABLE
+        value: "streaming_test_raw"
+      - name: AWS_ACCESS_KEY_ID
+        value: "admin"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "admin123"
+      - name: TRIGGER_INTERVAL
+        value: "30 seconds"
+      - name: MAX_OFFSETS_PER_TRIGGER
+        value: "1000"
+      - name: CHECKPOINT_LOCATION
+        value: "s3a://bronze/checkpoints/streaming-test"
+
+  deps: {}
+
+  # ── Restart policy ─────────────────────────────────────────────────────────
+  # Streaming jobs should restart on failure.
+  # The Keycloak token (~1 h lifetime) may expire — restarting gets a fresh token.
+  restartPolicy:
+    type: Always
+    onFailureRetries: 1000 # Effectively infinite for long-running streaming
+    onFailureRetryInterval: 10 # Seconds between retries
+    onSubmissionFailureRetries: 5
+    onSubmissionFailureRetryInterval: 20
+
+  timeToLiveSeconds: 3600

@@ -7,7 +7,7 @@ set -eu
 # Configuration
 DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-hungvt0110}"
 IMAGE_NAME="${IMAGE_NAME:-load-crypto-bronze}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+IMAGE_TAG="${1:-${IMAGE_TAG:-latest}}"
 PUSH_TO_DOCKERHUB="${PUSH_TO_DOCKERHUB:-true}"
 
 # Full image name for Docker Hub

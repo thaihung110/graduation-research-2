@@ -8,10 +8,13 @@ This job:
 4. Continuously loads data into Iceberg table in bronze warehouse
 """
 
+import base64
+import json
 import logging
 import sys
+from urllib import parse, request
 
-from config import load_job_config
+from config import load_job_config, load_oauth_debug_config
 from etl.extract import extract_from_kafka
 from etl.load import ensure_bronze_table_exists, load_to_bronze
 from etl.transform import transform_trades
@@ -21,6 +24,84 @@ from utils.schemas import get_avro_schema, get_avro_schema_json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """
+    Decode JWT payload (without verifying signature) for debugging purposes.
+
+    This is only used for logging to help debug OAuth configuration issues.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+
+        payload_b64 = parts[1]
+        # Add padding if necessary
+        padding = "=" * (-len(payload_b64) % 4)
+        decoded_bytes = base64.urlsafe_b64decode(payload_b64 + padding)
+        return json.loads(decoded_bytes.decode("utf-8"))
+    except Exception as e:
+        logger.warning("Failed to decode JWT payload for debug: %s", e, exc_info=True)
+        return {}
+
+
+def log_oauth_access_token_debug() -> None:
+    """
+    Fetch and decode an access token from Keycloak using the same client
+    credentials Spark/Iceberg REST use, then log the JWT payload.
+    """
+    try:
+        oauth_conf = load_oauth_debug_config()
+
+        logger.info(
+            "OAuth debug: requesting access token from %s with client_id=%s, scope=%s",
+            oauth_conf["token_endpoint"],
+            oauth_conf["client_id"],
+            oauth_conf["scope"],
+        )
+
+        data = parse.urlencode(
+            {
+                "grant_type": "client_credentials",
+                "client_id": oauth_conf["client_id"],
+                "client_secret": oauth_conf["client_secret"],
+                "scope": oauth_conf["scope"],
+            }
+        ).encode("utf-8")
+
+        req = request.Request(oauth_conf["token_endpoint"], data=data)
+        req.add_header(
+            "Content-Type", "application/x-www-form-urlencoded"
+        )
+
+        with request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8")
+
+        token_response = json.loads(body)
+        access_token = token_response.get("access_token")
+
+        if not access_token:
+            logger.warning(
+                "OAuth debug: no access_token in response. Raw response: %s", body
+            )
+            return
+
+        payload = _decode_jwt_payload(access_token)
+
+        # Do not log full token to avoid leaking secrets; only log length and payload.
+        logger.info(
+            "OAuth debug: received access token (length=%d). Decoded JWT payload:\n%s",
+            len(access_token),
+            json.dumps(payload, indent=2, sort_keys=True),
+        )
+    except Exception as e:
+        logger.error(
+            "OAuth debug: failed to fetch/decode access token: %s",
+            e,
+            exc_info=True,
+        )
 
 
 def process_batch(
@@ -110,6 +191,11 @@ def main():
         logger.info(f"Checkpoint Location: {checkpoint_location}")
         logger.info(f"Trigger Interval: {job_config['trigger_interval']}")
         logger.info("=" * 70)
+
+        # Debug: fetch and decode OAuth access token used by Iceberg REST client
+        # to help diagnose authentication / JWKS issues.
+        logger.info("OAuth debug: starting access token fetch and decode...")
+        log_oauth_access_token_debug()
 
         # Initialize Spark
         spark = get_spark_session()

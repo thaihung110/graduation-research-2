@@ -1,43 +1,70 @@
 #!/bin/bash
 
-# Build and push Docker image for Crypto OHLCV Silver Batch Job
-set -e
+# Script to build and push Docker image for Crypto Silver Transformation Spark job to Docker Hub
+
+set -eu
 
 # Configuration
-IMAGE_NAME="transform-crypto-silver-batch"
-REGISTRY="hungvt0110"
-TAG="${1:-latest}"
-FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
+DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-hungvt0110}"
+IMAGE_NAME="${IMAGE_NAME:-transform-crypto-silver-batch}"
 
-echo "======================================"
-echo "Building Silver Batch Transformation Job"
-echo "======================================"
-echo "Image: ${FULL_IMAGE}"
-echo "======================================"
+# Accept tag from first argument, otherwise default to v0.1
+IMAGE_TAG="${1:-v0.1}"
+PUSH_TO_DOCKERHUB="${PUSH_TO_DOCKERHUB:-true}"
 
-# Build Docker image
-echo "\n🔨 Building Docker image..."
-docker build -t "${FULL_IMAGE}" .
+# Full image name for Docker Hub
+FULL_IMAGE_NAME="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
 
-if [ $? -eq 0 ]; then
-    echo "✅  Build successful!"
-else
-    echo "❌ Build failed!"
-    exit 1
+# Get script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "${SCRIPT_DIR}"
+
+echo "=========================================="
+echo "Building Docker image for Crypto Silver Transformation Spark Job"
+echo "=========================================="
+echo "Docker Hub Username: ${DOCKERHUB_USERNAME}"
+echo "Image Name: ${IMAGE_NAME}"
+echo "Tag: ${IMAGE_TAG}"
+echo "Full Image: ${FULL_IMAGE_NAME}"
+echo "=========================================="
+
+# Build image
+echo ""
+echo "Step 1: Building Docker image..."
+docker build -t "${FULL_IMAGE_NAME}" .
+
+# Also tag as latest if different tag is used
+if [ "${IMAGE_TAG}" != "latest" ]; then
+    LATEST_TAG="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+    echo "Tagging as latest: ${LATEST_TAG}"
+    docker tag "${FULL_IMAGE_NAME}" "${LATEST_TAG}"
 fi
 
-# Push to registry
-echo "\n📤 Pushing to Docker Hub..."
-docker push "${FULL_IMAGE}"
-
-if [ $? -eq 0 ]; then
-    echo "✅ Push successful!"
-    echo "\n🎉 Image ready: ${FULL_IMAGE}"
+# Push to Docker Hub
+if [ "${PUSH_TO_DOCKERHUB}" = "true" ]; then
+    echo ""
+    echo "Step 2: Pushing to Docker Hub..."
+    echo "Make sure you are logged in to Docker Hub:"
+    echo "  docker login -u ${DOCKERHUB_USERNAME}"
+    echo ""
+    
+    docker push "${FULL_IMAGE_NAME}"
+    
+    if [ "${IMAGE_TAG}" != "latest" ]; then
+        docker push "${LATEST_TAG}"
+    fi
+    
+    echo ""
+    echo "=========================================="
+    echo "✓ Image pushed successfully!"
+    echo "Image: ${FULL_IMAGE_NAME}"
+    echo "=========================================="
 else
-    echo "❌ Push failed!"
-    exit 1
+    echo ""
+    echo "=========================================="
+    echo "✓ Image built locally (not pushed)"
+    echo "Image: ${FULL_IMAGE_NAME}"
+    echo "To push, set PUSH_TO_DOCKERHUB=true"
+    echo "=========================================="
 fi
 
-echo "\n======================================"
-echo "Build and push completed!"
-echo "======================================"

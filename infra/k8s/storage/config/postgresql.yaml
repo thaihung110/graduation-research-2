@@ -374,6 +374,16 @@ primary:
         create user source_api;
         alter user source_api with encrypted password 'source_api';
         alter database source_api owner to source_api;
+        -- Gravitino entity store (lưu metadata của Gravitino: metalake, catalog definitions...)
+        create database gravitino_db;
+        create user gravitino;
+        alter user gravitino with encrypted password 'gravitino';
+        alter database gravitino_db owner to gravitino;
+        -- Iceberg table metadata backend (lưu Iceberg schemas, snapshots, manifests... cho gravitino)
+        create database iceberg_catalog;
+        create user iceberg;
+        alter user iceberg with encrypted password 'iceberg';
+        alter database iceberg_catalog owner to iceberg;
     ## @param primary.initdb.scriptsConfigMap ConfigMap with scripts to be run at first boot
     ## NOTE: This will override `primary.initdb.scripts`
     ##
@@ -828,7 +838,7 @@ primary:
     ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
     ##   GKE, AWS & OpenStack)
     ##
-    storageClass: "standard"
+    storageClass: "hostpath"
     ## @param primary.persistence.accessModes PVC Access Mode for PostgreSQL volume
     ##
     accessModes:
@@ -1286,7 +1296,7 @@ readReplicas:
     ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
     ##   GKE, AWS & OpenStack)
     ##
-    storageClass: "standard"
+    storageClass: "hostpath"
     ## @param readReplicas.persistence.accessModes PVC Access Mode for PostgreSQL volume
     ##
     accessModes:

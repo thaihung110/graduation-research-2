@@ -13,8 +13,7 @@ fullnameOverride: ""
 clusterDomain: "cluster.local"
 
 # -- Additional labels to add to all resources
-additionalLabels:
-  {}
+additionalLabels: {}
   # app: lakekeeper
 
 # -- If true, set the annotation helm-hook-enabled: "false" for jobs that need to run before the catalog is started.
@@ -72,8 +71,7 @@ catalog:
   # -- (<html><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.29/#podsecuritycontext-v1-core">podsecuritycontext-v1-core</a></html>)
   # security context for the catalog Pods.
   # `runAsUser` and `runAsGroup` are ignored for the catalog container, please set with `catalog.image.uid` and `catalog.image.gid`
-  podSecurityContext:
-    {}
+  podSecurityContext: {}
     # # ---- EXAMPLE ----
     # podSecurityContext:
     #   runAsNonRoot: true
@@ -83,8 +81,7 @@ catalog:
   # -- (<html><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.29/#podsecuritycontext-v1-core">podsecuritycontext-v1-core</a></html>)
   # security context for the catalog container.
   # `runAsUser` is ignored, please set with `catalog.image.uid`, `runAsGroup` is ignored, please set with `catalog.image.gid`
-  containerSecurityContext:
-    {}
+  containerSecurityContext: {}
     # # ---- EXAMPLE ----
     # containerSecurityContext
     #   allowPrivilegeEscalation: false
@@ -327,7 +324,6 @@ serviceAccount:
 
   # -- Option to opt-out of the default behavior of service account token auto-mounting.
   automount: true
-
   # -- Name of the service account to use.
   # If not set and create is true, a name is generated using the fullname
   name: ""

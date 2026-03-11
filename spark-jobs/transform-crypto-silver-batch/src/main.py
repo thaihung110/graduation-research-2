@@ -27,15 +27,6 @@ logger = logging.getLogger(__name__)
 def main():
     """Main orchestration function."""
     try:
-        # Parse command line arguments
-        if len(sys.argv) < 3:
-            logger.error("Usage: python main.py <start_date> <end_date>")
-            logger.error("Example: python main.py 2025-12-28 2025-12-29")
-            sys.exit(1)
-
-        start_date = sys.argv[1]
-        end_date = sys.argv[2]
-
         # Load configuration
         job_config = load_job_config()
         bronze_table = job_config["bronze_table"]
@@ -51,11 +42,11 @@ def main():
         silver_table_name = silver_parts[2]
 
         logger.info("=" * 70)
-        logger.info("Crypto OHLCV Aggregation Job (BATCH)")
+        logger.info("Crypto OHLCV Aggregation Job (BATCH) — Full Scan")
         logger.info("=" * 70)
-        logger.info(f"Date Range: {start_date} to {end_date}")
         logger.info(f"Bronze Table: {bronze_table}")
         logger.info(f"Silver Table: {silver_table}")
+        logger.info("Processing ALL available data (no date filter)")
         logger.info("=" * 70)
 
         # Initialize Spark
@@ -67,16 +58,12 @@ def main():
         logger.info("\n📋 Ensuring Silver table exists...")
         ensure_silver_table_exists(spark, silver_database, silver_table_name)
 
-        # Extract from Bronze
+        # Extract from Bronze (full scan)
         logger.info("\n📥 Extracting data from Bronze...")
-        bronze_df = extract_from_bronze(
-            spark, bronze_table, start_date, end_date
-        )
+        bronze_df = extract_from_bronze(spark, bronze_table)
 
         if bronze_df.count() == 0:
-            logger.warning(
-                f"⚠️  No data found in Bronze for date range {start_date} to {end_date}"
-            )
+            logger.warning("⚠️  No data found in Bronze table")
             logger.info("Job completed with no data to process.")
             return
 

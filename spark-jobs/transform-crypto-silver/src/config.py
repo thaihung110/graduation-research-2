@@ -3,9 +3,6 @@ from typing import Any, Dict
 
 
 def load_spark_config() -> Dict[str, Any]:
-    """Load Spark configuration from environment variables."""
-    spark_minor_version = os.getenv("SPARK_MINOR_VERSION", "3.5")
-    iceberg_version = os.getenv("ICEBERG_VERSION", "1.5.2")
 
     # Bronze catalog
     bronze_config = {
@@ -33,11 +30,7 @@ def load_spark_config() -> Dict[str, Any]:
     )
 
     conf = {
-        "spark.jars.packages": (
-            f"org.apache.iceberg:iceberg-spark-runtime-{spark_minor_version}_2.12:{iceberg_version},"
-            f"org.apache.iceberg:iceberg-aws-bundle:{iceberg_version},"
-            f"org.apache.hadoop:hadoop-aws:3.3.4"
-        ),
+        # JARs are baked into the Docker image - no spark.jars.packages needed
         "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
         "spark.sql.streaming.schemaInference": "true",
         # Bronze catalog

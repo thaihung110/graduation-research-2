@@ -6,8 +6,8 @@
 set -e
 
 NAMESPACE="${NAMESPACE:-default}"
-KAFKA_POD="openhouse-kafka-controller-0 "
-TOPIC_NAME="${1:-csv-ingestion}"
+KAFKA_POD="openhouse-kafka-controller-0"
+TOPIC_NAME="${1:-market-data.finnhub.crypto-trades.bronze}"
 PARTITIONS="${2:-1}"
 REPLICATION_FACTOR="${3:-1}"
 

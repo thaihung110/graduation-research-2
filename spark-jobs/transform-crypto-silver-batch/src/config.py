@@ -13,7 +13,9 @@ def load_spark_config() -> Dict[str, Any]:
             "BRONZE_CATALOG_URL", "http://openhouse-lakekeeper:8181/catalog"
         ),
         "client_id": os.getenv("BRONZE_CLIENT_ID", "spark"),
-        "client_secret": os.getenv("BRONZE_CLIENT_SECRET", ""),
+        "client_secret": os.getenv(
+            "BRONZE_CLIENT_SECRET", "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
+        ),
         "warehouse": os.getenv("BRONZE_WAREHOUSE", "bronze"),
     }
 
@@ -24,7 +26,7 @@ def load_spark_config() -> Dict[str, Any]:
         ),
         "client_id": os.getenv("SILVER_CLIENT_ID", "spark"),
         "client_secret": os.getenv(
-            "SILVER_CLIENT_SECRET", "3FfkvrupMYsojoT2RnXqknvjCsljwFWl"
+            "SILVER_CLIENT_SECRET", "YeG2U2zPQqnLoIfD3Bc3c55pfIUnDNFd"
         ),
         "warehouse": os.getenv("SILVER_WAREHOUSE", "silver"),
     }
@@ -57,6 +59,7 @@ def load_spark_config() -> Dict[str, Any]:
         "spark.sql.catalog.silver.warehouse": silver_config["warehouse"],
         "spark.sql.catalog.silver.scope": "lakekeeper",
         "spark.sql.catalog.silver.oauth2-server-uri": keycloak_endpoint,
+        "spark.sql.catalog.lakekeeper.token-exchange-enabled": "false",
     }
 
     return conf

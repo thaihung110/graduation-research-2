@@ -6,17 +6,23 @@
 set -e
 
 NAMESPACE="${NAMESPACE:-default}"
-KAFKA_POD="openhouse-kafka-broker-0"
-TOPIC_NAME="csv-ingestion"
-PARTITIONS=3
-REPLICATION_FACTOR=1
-SASL_USERNAME="admin"
-SASL_PASSWORD="admin"
+KAFKA_POD="openhouse-kafka-controller-0"
+TOPIC_NAME="${1:-market-data.finnhub.crypto-trades.bronze}"
+PARTITIONS="${2:-1}"
+REPLICATION_FACTOR="${3:-1}"
+SASL_USERNAME="${SASL_USERNAME:-admin}"
+SASL_PASSWORD="${SASL_PASSWORD:-admin}"
 
-echo "Creating Kafka topic: $TOPIC_NAME"
+echo "=========================================="
+echo "Creating Kafka Topic (SASL)"
+echo "=========================================="
+echo "Topic Name: $TOPIC_NAME"
 echo "Namespace: $NAMESPACE"
 echo "Partitions: $PARTITIONS"
 echo "Replication Factor: $REPLICATION_FACTOR"
+echo "SASL Username: $SASL_USERNAME"
+echo "=========================================="
+echo ""
 
 # Create a temporary client properties file with SASL configuration
 echo "Creating temporary SASL configuration..."
@@ -37,15 +43,31 @@ kubectl exec -n $NAMESPACE $KAFKA_POD -- kafka-topics.sh \
   --bootstrap-server localhost:9092 \
   --command-config /tmp/client.properties
 
-echo "Topic '$TOPIC_NAME' created successfully!"
+echo ""
+echo "✅ Topic '$TOPIC_NAME' created successfully!"
 
 # List all topics to verify
 echo ""
-echo "Current topics:"
+echo "=========================================="
+echo "Current Topics:"
+echo "=========================================="
 kubectl exec -n $NAMESPACE $KAFKA_POD -- kafka-topics.sh \
   --list \
   --bootstrap-server localhost:9092 \
   --command-config /tmp/client.properties
 
+# Describe the topic
+echo ""
+echo "=========================================="
+echo "Topic Details:"
+echo "=========================================="
+kubectl exec -n $NAMESPACE $KAFKA_POD -- kafka-topics.sh \
+  --describe \
+  --topic $TOPIC_NAME \
+  --bootstrap-server localhost:9092 \
+  --command-config /tmp/client.properties
+
 # Cleanup temporary file
+echo ""
+echo "Cleaning up temporary files..."
 kubectl exec -n $NAMESPACE $KAFKA_POD -- rm -f /tmp/client.properties

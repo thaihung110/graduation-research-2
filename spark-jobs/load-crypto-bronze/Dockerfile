@@ -8,6 +8,22 @@ USER root
 # Install Avro Python library for decoding
 RUN pip install --no-cache-dir avro-python3
 
+# ==============================================================================
+# Pre-download required JAR dependencies to avoid network downloads at runtime
+# ==============================================================================
+ARG ICEBERG_VERSION=1.10.1
+ARG SPARK_VERSION=3.5.0
+ARG SCALA_VERSION=2.12
+ARG HADOOP_VERSION=3.3.4
+ARG PACKAGES="org.apache.iceberg:iceberg-spark-runtime-3.5_${SCALA_VERSION}:${ICEBERG_VERSION},org.apache.iceberg:iceberg-aws-bundle:${ICEBERG_VERSION},org.apache.spark:spark-sql-kafka-0-10_${SCALA_VERSION}:${SPARK_VERSION},org.apache.hadoop:hadoop-aws:${HADOOP_VERSION}"
+
+# Run an empty pyspark script to let Ivy download the packages and their dependencies,
+# then copy them directly into the standard Spark jars directory.
+RUN echo "print('Downloading packages...')" > /tmp/download.py && \
+    /opt/spark/bin/spark-submit --packages $PACKAGES /tmp/download.py && \
+    find /root/.ivy2 -type f -name "*.jar" -exec cp {} /opt/spark/jars/ \; && \
+    rm -rf /root/.ivy2 /tmp/download.py
+
 # Set working directory
 WORKDIR /app
 
