@@ -1,0 +1,52 @@
+streaming-test
+
+hub.vtcc.vn:8989/hungvt0110/streaming-test
+
+v0.6
+
+local:///app/src/main.py
+
+user_env_vars:
+{
+  "CATALOG_NAME": "gravitino_test",
+  "CATALOG_URL": "http://gravitino:9001/iceberg",
+  "KEYCLOAK_TOKEN_ENDPOINT": "http://security-keycloak/realms/iceberg/protocol/openid-connect/token",
+  "CLIENT_ID": "trino",
+  "CLIENT_SECRET": "AK48QgaKsqdEpP9PomRJw7l2T7qWGHdZ",
+  "CATALOG_SCOPE": "email",
+  "WAREHOUSE": "iceberg_s3",
+  "CATALOG_S3_ENDPOINT": "http://storage-minio:9000",
+
+  "KAFKA_BOOTSTRAP_SERVERS": "lakehouse-kafka-kafka-bootstrap.dmp-lakehouse-demo.svc:9094",
+  "KAFKA_TOPIC": "raw-ingress",
+  "KAFKA_STARTING_OFFSETS": "latest",
+  "KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
+  "KAFKA_SASL_MECHANISM": "SCRAM-SHA-512",
+  "KAFKA_SSL_TRUSTSTORE_LOCATION": "/etc/kafka/certs/ca/ca.crt",
+  "KAFKA_SASL_USERNAME": "raw-consumer",
+  "KAFKA_SASL_PASSWORD": "Ns2mOQT7RKD6sK2RmyfOnC3mOjGRiEWP",
+  "KAFKA_GROUP_ID": "raw-cg-test",
+  "MAX_OFFSETS_PER_TRIGGER": "1000",
+
+  "SCHEMA": "test_schema",
+  "TABLE": "hungvt",
+  "CHECKPOINT_LOCATION": "s3a://gravitino1/checkpoints/streaming-test",
+  "TRIGGER_INTERVAL": "2 seconds",
+  "SPARK_NO_DATA_MICRO_BATCHES_ENABLED": "true"
+}
+
+spark_conf:
+{
+    "spark.eventLog.dir": "s3a://spark-events/logs"
+}
+
+hadoop_conf:
+{
+    "fs.s3a.endpoint": "http://storage-minio:9000",
+    "fs.s3a.bucket.spark-events.endpoint": "http://storage-minio:9000",
+    "fs.s3a.bucket.spark-events.access.key": "root",
+    "fs.s3a.bucket.spark-events.secret.key": "tXceHwtzgRlFeNm4",
+    "fs.s3a.bucket.gravitino1.endpoint": "http://storage-minio:9000",
+    "fs.s3a.bucket.gravitino1.access.key": "root",
+    "fs.s3a.bucket.gravitino1.secret.key": "tXceHwtzgRlFeNm4"
+}

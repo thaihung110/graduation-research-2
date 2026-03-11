@@ -64,9 +64,7 @@ class DictSparkKubernetesOperator(SparkKubernetesOperator):
             name = meta.get("name")
             ns = self.namespace or meta.get("namespace", "default")
             spark_app_id = (
-                body.get("spec", {})
-                .get("sparkConf", {})
-                .get("spark.app.id")
+                body.get("spec", {}).get("sparkConf", {}).get("spark.app.id")
             )
 
             if str(self.dry_run).lower() in ["true", "1", "yes"]:
@@ -112,7 +110,9 @@ class DictSparkKubernetesOperator(SparkKubernetesOperator):
                         plural="sparkapplications",
                         name=name,
                     )
-                    real_app_id = (crd.get("status") or {}).get("sparkApplicationId")
+                    real_app_id = (crd.get("status") or {}).get(
+                        "sparkApplicationId"
+                    )
                     if real_app_id:
                         logger.info(
                             f"Got sparkApplicationId from CRD: {real_app_id}"

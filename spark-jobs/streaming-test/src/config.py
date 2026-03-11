@@ -38,6 +38,15 @@ def load_spark_config() -> Dict[str, Any]:
     no_data_micro_batches_enabled = os.getenv(
         "SPARK_NO_DATA_MICRO_BATCHES_ENABLED", "true"
     )
+    # Spark UI redaction: extend the default regex so that any Spark
+    # configuration key containing "credential", "secret", "password", etc.
+    # (including spark.sql.catalog.*.credential and CLIENT_SECRET envs) is
+    # rendered as ****** (redacted) in the Environment tab.
+    redaction_regex = os.getenv(
+        "SPARK_REDACTION_REGEX",
+        # Start from Spark's default and add a couple of aliases explicitly.
+        r"(?i)secret|password|token|credential|.*_?pwd|.*_?secret|.*_?token|.*_?pass|client_secret",
+    )
 
     return {
         # ── Iceberg extensions ──────────────────────────────────────────────
@@ -55,6 +64,8 @@ def load_spark_config() -> Dict[str, Any]:
         f"spark.sql.catalog.{catalog_name}.header.X-Iceberg-Access-Delegation": "vended-credentials",
         f"spark.sql.catalog.{catalog_name}.s3.endpoint": catalog_s3_endpoint,
         f"spark.sql.catalog.{catalog_name}.s3.path-style-access": "true",
+        # ── Redaction ─────────────────────────────────────────────────────────
+        "spark.redaction.regex": redaction_regex,
         # ── Kafka consumer ──────────────────────────────────────────────────
         "spark.sql.streaming.kafka.useDeprecatedOffsetFetching": "false",
         # Run empty micro-batches to keep progress/events flowing when idle.
